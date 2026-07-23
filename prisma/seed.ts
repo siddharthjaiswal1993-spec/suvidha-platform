@@ -15,8 +15,7 @@
  *
  * Run with: npm run db:seed
  */
-import pkg from "@prisma/client";
-const { PrismaClient } = pkg;
+import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { toJsonColumn } from "../src/lib/json";
 

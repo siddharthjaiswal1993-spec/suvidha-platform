@@ -1,0 +1,1644 @@
+// Suvidha — Unified Citizen Life Administration and Institutional Service Orchestration Platform
+// Prisma schema — see docs/DATA_MODEL.md for the full entity-relationship narrative.
+//
+// This schema has two halves, built in two passes (see docs/CORRECTED_PRODUCT_THESIS.md for why):
+//   1. LEGACY & SUCCESSION domain models (Person..RuleVersion below): the original estate,
+//      bereavement, succession and claims design. Retained in full as one product domain, not
+//      discarded when the product thesis broadened.
+//   2. LIFELONG CITIZEN ADMINISTRATION domain models (CitizenProfile..ServiceFee further down):
+//      the broader master-profile, institutional-relationship-graph, service-request,
+//      life-event, communication and delegated-access layer the corrected thesis requires.
+// The two halves share Person, Institution, LegalDocument, Notification, ConsentRecord,
+// Grievance, Payment and AuditEvent rather than duplicating them — see the "Where this prototype
+// consolidates spec-named entities" section of docs/DATA_MODEL.md for every deliberate merge.
+//
+// Design choices (documented further in docs/DATA_MODEL.md and docs/ARCHITECTURE.md):
+// - Provider is SQLite for a zero-setup, self-contained prototype (`npm run db:seed && npm run dev`
+//   works from a clean clone with no external account). PostgreSQL production migration is
+//   documented, not implemented, per the assignment brief.
+// - No native Prisma `enum` types: SQLite's Prisma connector does not support them, and using
+//   plain, Zod-validated `String` status fields keeps this schema portable to Postgres unchanged.
+// - No native array/Json reliance for cross-engine safety: repeatable data uses join tables;
+//   flexible structured data (rule conditions, permission scopes) is stored as a JSON-serialized
+//   String column with helpers in src/lib/json.ts, so the same column type works on both engines.
+// - Every model that can be mutated after creation carries `createdAt`/`updatedAt`; models that
+//   represent point-in-time facts (AuditEvent, ConsentRecord history rows, Decision) are treated
+//   as append-only from the application layer even though SQLite cannot enforce immutability itself.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// =====================================================================================
+// IDENTITY & PEOPLE
+// =====================================================================================
+
+/// A platform login/session identity. Distinct from Person: a Deceased Person never has a User
+/// account of their own once deceased-status processing begins; a Claimant does.
+model User {
+  id            String       @id @default(cuid())
+  email         String       @unique
+  displayName   String
+  /// One of: estate_planner, trusted_contact, claimant, registrar_officer, institution_officer,
+  /// verification_officer, maker, checker, adjudicator, grievance_officer, auditor, integration_admin
+  primaryRole   String
+  personId      String?      @unique
+  person        Person?      @relation(fields: [personId], references: [id])
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  isDemoAccount Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  auditEvents     AuditEvent[]
+  caseAssignments CaseAssignment[]
+  decisions       Decision[]
+  notifications   Notification[]
+}
+
+/// A real-world individual. May or may not have a User login (e.g. the Deceased Person, or a
+/// family member who has never signed in, still exists as a Person for relationship mapping).
+model Person {
+  id            String    @id @default(cuid())
+  fullName      String
+  preferredName String?
+  dateOfBirth   DateTime?
+  dateOfDeath   DateTime?
+  /// living | deceased_reported | deceased_verified | deceased_disputed | deceased_corrected
+  lifeStatus    String    @default("living")
+  gender        String?
+  scenarioTag   String? // demo seeding aid, e.g. "scenario-1"
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  user                                 User?
+  identifiers                          PersonIdentifier[]
+  contactMethods                       ContactMethod[]
+  addresses                            Address[]
+  relationshipsFrom                    Relationship[]           @relation("RelationshipFrom")
+  relationshipsTo                      Relationship[]           @relation("RelationshipTo")
+  householdMemberships                 HouseholdMember[]
+  estatePlan                           EstatePlan?
+  estate                               Estate?
+  identityRecords                      IdentityRecord[]
+  trustedContactGrantsGiven            TrustedContact[]         @relation("TrustedContactGrantor")
+  trustedContactGrantsReceived         TrustedContact[]         @relation("TrustedContactHolder")
+  assetHoldings                        AssetHolding[]
+  liabilities                          Liability[]
+  nominationsAsNominee                 Nomination[]             @relation("NomineePerson")
+  beneficiaryDesignationsAsBeneficiary BeneficiaryDesignation[] @relation("BeneficiaryPerson")
+  jointHoldings                        JointHolder[]
+  willsAsTestator                      WillRecord[]             @relation("Testator")
+  trustsAsSettlor                      TrustRecord[]            @relation("Settlor")
+  executorAppointments                 ExecutorAppointment[]    @relation("ExecutorPerson")
+  authorityCredentials                 AuthorityCredential[]
+  legalDocuments                       LegalDocument[]
+  claimantProfiles                     Claimant[]
+  deathEvent                           DeathEvent?
+  deathEventEvidenceSubmitted          DeathEventEvidence[]
+  fraudSignalsSubject                  FraudSignal[]            @relation("FraudSubjectPerson")
+
+  // Lifelong Citizen Administration domain back-relations
+  citizenProfile             CitizenProfile?
+  institutionRelationships   InstitutionRelationship[]
+  serviceRequests            ServiceRequest[]
+  lifeEvents                 LifeEvent[]
+  inboxThreads               InboxThread[]
+  representedByProfessionals ProfessionalRepresentative[] @relation("PrincipalPerson")
+  actingAsProfessionalFor    ProfessionalRepresentative[] @relation("RepresentativePerson")
+  delegatedTasksAsAssistant  DelegatedTask[]              @relation("AssistantPerson")
+
+  @@index([lifeStatus])
+}
+
+/// A masked identity identifier. Raw values are never stored — only a masked display value and a
+/// salted hash used purely for equality matching during identity/death-event resolution.
+model PersonIdentifier {
+  id                 String   @id @default(cuid())
+  personId           String
+  person             Person   @relation(fields: [personId], references: [id])
+  /// aadhaar_last4 | pan | passport | driving_licence | voter_id | ration_card | demat_client_id | other
+  idType             String
+  maskedValue        String // e.g. "XXXX XXXX 1234"
+  valueHash          String // salted hash for matching only, never the raw identifier
+  issuingAuthority   String?
+  verified           Boolean  @default(false)
+  verificationSource String? // e.g. "DigiLocker (simulated)", "Manual review"
+  createdAt          DateTime @default(now())
+
+  @@index([personId, idType])
+  @@index([valueHash])
+}
+
+model ContactMethod {
+  id        String   @id @default(cuid())
+  personId  String
+  person    Person   @relation(fields: [personId], references: [id])
+  type      String // email | mobile
+  value     String
+  isPrimary Boolean  @default(false)
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Address {
+  id        String   @id @default(cuid())
+  personId  String
+  person    Person   @relation(fields: [personId], references: [id])
+  label     String // home | correspondence | property | registered_office
+  line1     String
+  line2     String?
+  city      String
+  state     String
+  pincode   String
+  country   String   @default("India")
+  createdAt DateTime @default(now())
+}
+
+/// A directed relationship fact, e.g. personId=child, relatedPersonId=parent, relationType="child_of".
+/// Undirected pairs (e.g. spouse) are modeled as two rows for query simplicity in a prototype.
+model Relationship {
+  id                 String   @id @default(cuid())
+  personId           String
+  person             Person   @relation("RelationshipFrom", fields: [personId], references: [id])
+  relatedPersonId    String
+  relatedPerson      Person   @relation("RelationshipTo", fields: [relatedPersonId], references: [id])
+  relationType       String // spouse | child | parent | sibling | grandchild | guardian_of | other
+  isMinorDependent   Boolean  @default(false)
+  evidenceDocumentId String?
+  verified           Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  @@index([personId])
+  @@index([relatedPersonId])
+}
+
+model Household {
+  id        String   @id @default(cuid())
+  label     String
+  createdAt DateTime @default(now())
+
+  members HouseholdMember[]
+}
+
+model HouseholdMember {
+  id              String    @id @default(cuid())
+  householdId     String
+  household       Household @relation(fields: [householdId], references: [id])
+  personId        String
+  person          Person    @relation(fields: [personId], references: [id])
+  roleInHousehold String? // head | spouse | dependent
+}
+
+// =====================================================================================
+// ESTATE PLANNING (LIVING) & ESTATE (POST-DEATH)
+// =====================================================================================
+
+/// The living Estate Planner's working plan: readiness state, reminders, preferences.
+model EstatePlan {
+  id                    String    @id @default(cuid())
+  personId              String    @unique
+  person                Person    @relation(fields: [personId], references: [id])
+  readinessScore        Int       @default(0) // 0-100, completeness-based, never balance-based
+  lastReviewedAt        DateTime?
+  nextReviewDueAt       DateTime?
+  emergencyInstructions String? // plain-language note for family in a bereavement moment
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  reminders ReviewReminder[]
+}
+
+model ReviewReminder {
+  id           String     @id @default(cuid())
+  estatePlanId String
+  estatePlan   EstatePlan @relation(fields: [estatePlanId], references: [id])
+  title        String
+  dueAt        DateTime
+  status       String     @default("pending") // pending | done | snoozed
+  createdAt    DateTime   @default(now())
+}
+
+/// Created once a DeathEvent reaches "matched" for this Person. The legal/administrative
+/// container for everything that happens after death: claims, disputes, closure.
+model Estate {
+  id           String    @id @default(cuid())
+  personId     String    @unique
+  person       Person    @relation(fields: [personId], references: [id])
+  deathEventId String?   @unique
+  /// open | in_administration | partially_settled | closed
+  status       String    @default("open")
+  succession   String? // testamentary | intestate | mixed | undetermined
+  openedAt     DateTime  @default(now())
+  closedAt     DateTime?
+
+  claimants   Claimant[]
+  claims      Claim[]
+  disputes    Dispute[]
+  courtOrders CourtOrder[]
+}
+
+/// A verification event/artifact for an identity attribute (kept distinct from PersonIdentifier,
+/// which stores the masked value itself — this records the verification act: who, how, when).
+model IdentityRecord {
+  id         String   @id @default(cuid())
+  personId   String
+  person     Person   @relation(fields: [personId], references: [id])
+  method     String // digilocker_simulated | manual_document_review | video_kyc_simulated
+  outcome    String // verified | rejected | inconclusive
+  confidence Float? // 0-1
+  verifiedAt DateTime @default(now())
+  notes      String?
+}
+
+// =====================================================================================
+// DEATH EVENT LIFECYCLE
+// =====================================================================================
+
+model DeathEvent {
+  id                      String        @id @default(cuid())
+  personId                String        @unique
+  person                  Person        @relation(fields: [personId], references: [id])
+  /// reported | evidence_submitted | registrar_verified | identity_match_pending | matched |
+  /// partially_matched | contested | corrected | cancelled | finalised
+  status                  String        @default("reported")
+  dateOfDeath             DateTime
+  placeOfDeath            String
+  countryOfDeath          String        @default("India")
+  reportedByPersonId      String? // Informant, may not be a Person we already know
+  informantName           String?
+  informantRelation       String?
+  registrarJurisdictionId String?
+  jurisdiction            Jurisdiction? @relation(fields: [registrarJurisdictionId], references: [id])
+  registrationNumber      String? // simulated CRS death registration number
+  isPubliclyVisible       Boolean       @default(false) // must always stay false — see docs/PRIVACY.md
+  scenarioTag             String?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  evidence      DeathEventEvidence[]
+  matches       DeathEventMatch[]
+  corrections   DeathEventCorrection[]
+  notifications Notification[]
+}
+
+model DeathEventEvidence {
+  id                  String         @id @default(cuid())
+  deathEventId        String
+  deathEvent          DeathEvent     @relation(fields: [deathEventId], references: [id])
+  submittedByPersonId String?
+  submittedBy         Person?        @relation(fields: [submittedByPersonId], references: [id])
+  evidenceType        String // death_certificate | hospital_discharge_summary | cremation_certificate | police_report
+  documentId          String?
+  document            LegalDocument? @relation(fields: [documentId], references: [id])
+  verificationStatus  String         @default("pending") // pending | verified | rejected
+  createdAt           DateTime       @default(now())
+}
+
+/// One row per institution/record candidate the death event is checked against.
+model DeathEventMatch {
+  id                String      @id @default(cuid())
+  deathEventId      String
+  deathEvent        DeathEvent  @relation(fields: [deathEventId], references: [id])
+  institutionId     String
+  institution       Institution @relation(fields: [institutionId], references: [id])
+  confidenceScore   Float // 0-1
+  matchFactors      String // JSON array of explainable factors, see src/lib/json.ts
+  /// suggested | confirmed | rejected | needs_human_review
+  status            String      @default("suggested")
+  riskActionApplied String? // e.g. "debit_freeze", "flagged_for_review", "no_action_required"
+  reviewedByUserId  String?
+  reviewedAt        DateTime?
+  createdAt         DateTime    @default(now())
+
+  @@index([deathEventId])
+  @@index([institutionId])
+}
+
+/// Records a false-positive death match and its correction/reactivation lifecycle (Scenario 5).
+model DeathEventCorrection {
+  id                   String     @id @default(cuid())
+  deathEventId         String
+  deathEvent           DeathEvent @relation(fields: [deathEventId], references: [id])
+  reason               String // e.g. "misidentification", "duplicate_record", "clerical_error"
+  challengedByPersonId String?
+  /// challenge_initiated | reverification_in_progress | registrar_corrected | agencies_notified | resolved
+  status               String     @default("challenge_initiated")
+  resolutionNotes      String?
+  createdAt            DateTime   @default(now())
+  resolvedAt           DateTime?
+}
+
+// =====================================================================================
+// TRUSTED CONTACTS, CONSENT & ACCESS
+// =====================================================================================
+
+/// A platform access role only — never nomination, executorship, or ownership. See docs/TERMINOLOGY.md.
+model TrustedContact {
+  id              String    @id @default(cuid())
+  grantorPersonId String // the living Estate Planner
+  grantor         Person    @relation("TrustedContactGrantor", fields: [grantorPersonId], references: [id])
+  holderPersonId  String // the Trusted Contact themself
+  holder          Person    @relation("TrustedContactHolder", fields: [holderPersonId], references: [id])
+  label           String? // e.g. "Elder daughter", "Family friend and neighbour"
+  /// invited | active | revoked
+  status          String    @default("invited")
+  invitedAt       DateTime  @default(now())
+  activatedAt     DateTime?
+  revokedAt       DateTime?
+
+  accessGrants AccessGrant[]
+
+  @@index([grantorPersonId])
+  @@index([holderPersonId])
+}
+
+/// A reusable named policy template describing what a Trusted Contact may see and when.
+model AccessPolicy {
+  id                             String   @id @default(cuid())
+  name                           String // e.g. "Emergency contact only", "Full inventory, no balances"
+  /// none | plan_exists_confirmation | emergency_contacts_only | selected_documents |
+  /// selected_asset_categories | full_inventory_no_balances
+  visibilityLevel                String
+  /// immediate | after_verified_death | after_waiting_period | requires_co_approval
+  timingRule                     String
+  waitingPeriodDays              Int?
+  requiresCoApprovalFromHolderId String?
+  version                        Int      @default(1)
+  createdAt                      DateTime @default(now())
+
+  accessGrants AccessGrant[]
+}
+
+model AccessGrant {
+  id               String         @id @default(cuid())
+  trustedContactId String
+  trustedContact   TrustedContact @relation(fields: [trustedContactId], references: [id])
+  accessPolicyId   String
+  accessPolicy     AccessPolicy   @relation(fields: [accessPolicyId], references: [id])
+  scopeConfig      String? // JSON-serialized list of asset category / document ids in scope
+  /// granted | revoked
+  status           String         @default("granted")
+  grantedAt        DateTime       @default(now())
+  revokedAt        DateTime?
+  purposeTags      String? // JSON array, e.g. ["bereavement_support"]
+
+  @@index([trustedContactId])
+}
+
+model ConsentRecord {
+  id          String     @id @default(cuid())
+  personId    String // whose data the consent concerns
+  purpose     String // e.g. "asset_discovery", "digilocker_document_fetch"
+  connectorId String?
+  connector   Connector? @relation(fields: [connectorId], references: [id])
+  /// granted | revoked | expired
+  status      String     @default("granted")
+  grantedAt   DateTime   @default(now())
+  revokedAt   DateTime?
+  expiresAt   DateTime?
+
+  artefacts                ConsentArtefact[]
+  institutionRelationships InstitutionRelationship[]
+  consentScopes            ConsentScope[]
+}
+
+/// The durable "receipt" representation of a given consent event, kept even after revocation.
+model ConsentArtefact {
+  id              String        @id @default(cuid())
+  consentRecordId String
+  consentRecord   ConsentRecord @relation(fields: [consentRecordId], references: [id])
+  receiptNumber   String        @unique
+  scopeSummary    String
+  issuedAt        DateTime      @default(now())
+}
+
+// =====================================================================================
+// INSTITUTIONS & INTEGRATIONS
+// =====================================================================================
+
+model Regulator {
+  id        String @id @default(cuid())
+  name      String @unique // RBI | SEBI | IRDAI | PFRDA | EPFO | IEPFA | State Registrar General
+  shortCode String @unique
+
+  institutions Institution[]
+}
+
+model Institution {
+  id                   String     @id @default(cuid())
+  name                 String
+  category             String // bank | depository | mutual_fund | insurer | pension_body | government_registry | property_registry
+  regulatorId          String?
+  regulator            Regulator? @relation(fields: [regulatorId], references: [id])
+  isRegistrarAuthority Boolean    @default(false)
+  createdAt            DateTime   @default(now())
+
+  users             User[]
+  deathEventMatches DeathEventMatch[]
+  integrations      Integration[]
+  assets            Asset[]
+  claims            Claim[]
+  caseAssignments   CaseAssignment[]
+  slas              SLA[]
+  grievances        Grievance[]
+
+  // Lifelong Citizen Administration domain back-relations
+  profileFieldValuesSourced ProfileFieldValue[]
+  institutionRelationships  InstitutionRelationship[]
+  serviceCatalogues         ServiceCatalogue[]
+  inboxThreads              InboxThread[]
+}
+
+/// Catalog of connector *types* (see docs/INTEGRATIONS.md for the real/mocked label of each).
+model Connector {
+  id               String @id @default(cuid())
+  key              String @unique // death_registry | digilocker | pan_verification | account_aggregator | ckyc | bank | depository | mutual_fund | insurance | epfo | nps | iepf | land_records | property_registration | vehicle_records | employer_benefits | postal_savings | court_legal_document | notification
+  displayName      String
+  /// real_public_integration_documented | regulated_partner_integration_required |
+  /// institution_specific_integration_required | manual_assisted_workflow | prototype_simulation |
+  /// future_policy_dependency
+  integrationLabel String
+  description      String
+
+  integrations             Integration[]
+  consentRecords           ConsentRecord[]
+  institutionRelationships InstitutionRelationship[]
+}
+
+model Integration {
+  id            String      @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  connectorId   String
+  connector     Connector   @relation(fields: [connectorId], references: [id])
+  /// active | disabled | sandbox
+  status        String      @default("sandbox")
+  createdAt     DateTime    @default(now())
+
+  externalRecordReferences ExternalRecordReference[]
+}
+
+/// Links our canonical Person/Asset to an external system's own record id (tokenised, never a
+/// raw credential) — the backbone of "resolve external identifiers to a canonical location".
+model ExternalRecordReference {
+  id              String      @id @default(cuid())
+  integrationId   String
+  integration     Integration @relation(fields: [integrationId], references: [id])
+  personId        String?
+  assetId         String?
+  asset           Asset?      @relation(fields: [assetId], references: [id])
+  externalIdToken String // tokenised, e.g. "tok_9f2..." never the real account/policy number
+  matchConfidence Float?
+  createdAt       DateTime    @default(now())
+}
+
+// =====================================================================================
+// ASSETS & LIABILITIES
+// =====================================================================================
+
+model Asset {
+  id                  String       @id @default(cuid())
+  ownerPersonId       String? // convenience denormalisation of the primary holder, see AssetHolding for full ownership
+  /// bank_deposit | fixed_deposit | demat_securities | mutual_fund | life_insurance | general_insurance |
+  /// epf | eps | nps | government_pension | gratuity | ppf | scss | nsc | kvp | post_office_deposit |
+  /// property | vehicle | gold_valuables | locker | business_interest | digital_asset | other
+  category            String
+  productType         String? // e.g. "Savings Account", "ULIP", "SGB"
+  institutionId       String?
+  institution         Institution? @relation(fields: [institutionId], references: [id])
+  label               String // user-facing display name, e.g. "HDFC Bank Savings — ...4821"
+  maskedAccountNumber String?
+  /// self_reported | connector_verified | document_verified
+  provenance          String       @default("self_reported")
+  scenarioTag         String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  deletedAt           DateTime?
+
+  holdings                AssetHolding[]
+  nominations             Nomination[]
+  beneficiaryDesignations BeneficiaryDesignation[]
+  jointHolders            JointHolder[]
+  externalRefs            ExternalRecordReference[]
+  claimAssets             ClaimAsset[]
+  mutations               Mutation[]
+  institutionRelationship InstitutionRelationship?
+}
+
+model AssetHolding {
+  id          String   @id @default(cuid())
+  assetId     String
+  asset       Asset    @relation(fields: [assetId], references: [id])
+  personId    String
+  person      Person   @relation(fields: [personId], references: [id])
+  /// sole | joint_either_or_survivor | joint_former_or_survivor | joint_jointly | authorised_signatory
+  holdingType String   @default("sole")
+  createdAt   DateTime @default(now())
+}
+
+model Liability {
+  id                    String    @id @default(cuid())
+  personId              String
+  person                Person    @relation(fields: [personId], references: [id])
+  category              String // home_loan | vehicle_loan | personal_loan | business_loan | credit_card | tax_dues | other
+  label                 String
+  outstandingAmountBand String? // banded, never exact balance shown to unauthorised viewers
+  institutionName       String?
+  createdAt             DateTime  @default(now())
+  deletedAt             DateTime?
+}
+
+model Nomination {
+  id                      String    @id @default(cuid())
+  assetId                 String
+  asset                   Asset     @relation(fields: [assetId], references: [id])
+  nomineePersonId         String?
+  nomineePerson           Person?   @relation("NomineePerson", fields: [nomineePersonId], references: [id])
+  nomineeNameOnRecord     String // as registered at the institution, may not resolve to a known Person
+  nomineeRelationOnRecord String?
+  isMinor                 Boolean   @default(false)
+  guardianNameOnRecord    String?
+  sharePercentage         Float?    @default(100)
+  registeredAt            DateTime?
+  status                  String    @default("active") // active | outdated | disputed
+  createdAt               DateTime  @default(now())
+}
+
+/// Beneficiary under a policy/will/trust — distinct from an asset-level Nomination.
+model BeneficiaryDesignation {
+  id                      String       @id @default(cuid())
+  assetId                 String?
+  asset                   Asset?       @relation(fields: [assetId], references: [id])
+  willRecordId            String?
+  willRecord              WillRecord?  @relation(fields: [willRecordId], references: [id])
+  trustRecordId           String?
+  trustRecord             TrustRecord? @relation(fields: [trustRecordId], references: [id])
+  beneficiaryPersonId     String?
+  beneficiaryPerson       Person?      @relation("BeneficiaryPerson", fields: [beneficiaryPersonId], references: [id])
+  beneficiaryNameOnRecord String
+  sharePercentage         Float?
+  createdAt               DateTime     @default(now())
+}
+
+model JointHolder {
+  id        String   @id @default(cuid())
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id])
+  personId  String
+  person    Person   @relation(fields: [personId], references: [id])
+  mandate   String // either_or_survivor | former_or_survivor | jointly
+  createdAt DateTime @default(now())
+}
+
+// =====================================================================================
+// WILLS, TRUSTS & AUTHORITY DOCUMENTS
+// =====================================================================================
+
+model WillRecord {
+  id                   String         @id @default(cuid())
+  testatorPersonId     String
+  testator             Person         @relation("Testator", fields: [testatorPersonId], references: [id])
+  documentId           String?
+  document             LegalDocument? @relation(fields: [documentId], references: [id])
+  /// referenced_only | uploaded | registered_with_sub_registrar
+  storageStatus        String         @default("referenced_only")
+  executionDate        DateTime?
+  /// unregistered | registered
+  registrationStatus   String         @default("unregistered")
+  version              Int            @default(1)
+  isLatestKnownVersion Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  executorAppointments    ExecutorAppointment[]
+  beneficiaryDesignations BeneficiaryDesignation[]
+}
+
+model TrustRecord {
+  id              String         @id @default(cuid())
+  settlorPersonId String
+  settlor         Person         @relation("Settlor", fields: [settlorPersonId], references: [id])
+  trustName       String
+  documentId      String?
+  document        LegalDocument? @relation(fields: [documentId], references: [id])
+  createdAt       DateTime       @default(now())
+
+  beneficiaryDesignations BeneficiaryDesignation[]
+}
+
+model ExecutorAppointment {
+  id                   String     @id @default(cuid())
+  willRecordId         String
+  willRecord           WillRecord @relation(fields: [willRecordId], references: [id])
+  executorPersonId     String?
+  executorPerson       Person?    @relation("ExecutorPerson", fields: [executorPersonId], references: [id])
+  executorNameOnRecord String
+  isPrimary            Boolean    @default(true)
+  createdAt            DateTime   @default(now())
+}
+
+/// A granted legal authority instrument recognised post-death: succession certificate, probate,
+/// letters of administration, legal-heir certificate, surviving-member certificate, etc.
+model AuthorityCredential {
+  id                 String         @id @default(cuid())
+  personId           String // the claimant who holds this credential
+  person             Person         @relation(fields: [personId], references: [id])
+  /// succession_certificate | probate | letters_of_administration | legal_heir_certificate |
+  /// surviving_member_certificate | guardian_certificate | court_order
+  credentialType     String
+  issuingAuthority   String
+  documentId         String?
+  document           LegalDocument? @relation(fields: [documentId], references: [id])
+  issuedAt           DateTime?
+  verificationStatus String         @default("pending") // pending | verified | rejected
+  createdAt          DateTime       @default(now())
+}
+
+model LegalDocument {
+  id             String    @id @default(cuid())
+  ownerPersonId  String?
+  owner          Person?   @relation(fields: [ownerPersonId], references: [id])
+  documentType   String // death_certificate | will | trust_deed | pan_card | aadhaar_card | relationship_proof | court_order | other
+  fileLabel      String // synthetic filename, no real file bytes stored in the prototype
+  isDemoDocument Boolean   @default(true)
+  uploadedAt     DateTime  @default(now())
+  deletedAt      DateTime?
+
+  wills                WillRecord[]
+  trusts               TrustRecord[]
+  authorityCredentials AuthorityCredential[]
+  deathEventEvidence   DeathEventEvidence[]
+  verifications        DocumentVerification[]
+  submittedEvidence    SubmittedEvidence[]
+  documentProfile      DocumentProfile?
+}
+
+model DocumentVerification {
+  id               String        @id @default(cuid())
+  legalDocumentId  String
+  legalDocument    LegalDocument @relation(fields: [legalDocumentId], references: [id])
+  verifiedByUserId String?
+  /// pending | verified | rejected | needs_original
+  outcome          String        @default("pending")
+  notes            String?
+  verifiedAt       DateTime      @default(now())
+}
+
+// =====================================================================================
+// CLAIMS
+// =====================================================================================
+
+/// A verified individual acting on an Estate — see docs/TERMINOLOGY.md for the full role list.
+model Claimant {
+  id                 String   @id @default(cuid())
+  estateId           String
+  estate             Estate   @relation(fields: [estateId], references: [id])
+  personId           String
+  person             Person   @relation(fields: [personId], references: [id])
+  /// trusted_contact | nominee | beneficiary | surviving_joint_holder | executor | administrator |
+  /// legal_heir | guardian | other_claimant
+  claimedRole        String
+  relationToDeceased String?
+  identityVerified   Boolean  @default(false)
+  wasPreAuthorised   Boolean  @default(false) // true if invited Trusted Contact, false if uninvited family member
+  createdAt          DateTime @default(now())
+
+  claims Claim[]
+}
+
+model Claim {
+  id            String      @id @default(cuid())
+  estateId      String
+  estate        Estate      @relation(fields: [estateId], references: [id])
+  claimantId    String
+  claimant      Claimant    @relation(fields: [claimantId], references: [id])
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  /// draft | submitted | under_review | deficiency_pending | escalated | approved | partially_approved |
+  /// rejected | fraud_hold | court_hold | settled | closed
+  status        String      @default("draft")
+  claimNumber   String      @unique
+  submittedAt   DateTime?
+  scenarioTag   String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  claimAssets        ClaimAsset[]
+  workflow           ClaimWorkflow?
+  caseAssignments    CaseAssignment[]
+  decisions          Decision[]
+  deficiencyRequests DeficiencyRequest[]
+  submittedEvidence  SubmittedEvidence[]
+  payments           Payment[]
+  transfers          Transfer[]
+  mutations          Mutation[]
+  recordUpdates      RecordUpdate[]
+  communications     Communication[]
+  fraudSignals       FraudSignal[]
+  auditEvents        AuditEvent[]
+}
+
+model ClaimAsset {
+  id                 String   @id @default(cuid())
+  claimId            String
+  claim              Claim    @relation(fields: [claimId], references: [id])
+  assetId            String
+  asset              Asset    @relation(fields: [assetId], references: [id])
+  /// the authority-engine recommendation at the time the claim asset was added
+  recommendedPathway String?
+  createdAt          DateTime @default(now())
+}
+
+model ClaimWorkflow {
+  id             String   @id @default(cuid())
+  claimId        String   @unique
+  claim          Claim    @relation(fields: [claimId], references: [id])
+  templateKey    String // e.g. "nominee_bank_deposit", "legal_heir_no_will"
+  currentStepKey String?
+  createdAt      DateTime @default(now())
+
+  steps WorkflowStep[]
+}
+
+model WorkflowStep {
+  id              String        @id @default(cuid())
+  claimWorkflowId String
+  claimWorkflow   ClaimWorkflow @relation(fields: [claimWorkflowId], references: [id])
+  stepKey         String
+  title           String
+  order           Int
+  /// pending | in_progress | completed | blocked | skipped
+  status          String        @default("pending")
+  completedAt     DateTime?
+
+  requirements Requirement[]
+}
+
+model Requirement {
+  id              String       @id @default(cuid())
+  workflowStepId  String
+  workflowStep    WorkflowStep @relation(fields: [workflowStepId], references: [id])
+  title           String
+  requirementType String // document | attestation | co_claimant_noc | external_verification
+  isMandatory     Boolean      @default(true)
+  /// pending | satisfied | waived | rejected
+  status          String       @default("pending")
+}
+
+model SubmittedEvidence {
+  id                String         @id @default(cuid())
+  claimId           String
+  claim             Claim          @relation(fields: [claimId], references: [id])
+  legalDocumentId   String?
+  legalDocument     LegalDocument? @relation(fields: [legalDocumentId], references: [id])
+  evidenceLabel     String
+  reusedFromClaimId String? // demonstrates "reuse verified documents across institutions"
+  createdAt         DateTime       @default(now())
+}
+
+model CaseAssignment {
+  id             String      @id @default(cuid())
+  claimId        String
+  claim          Claim       @relation(fields: [claimId], references: [id])
+  institutionId  String
+  institution    Institution @relation(fields: [institutionId], references: [id])
+  assignedUserId String?
+  assignedUser   User?       @relation(fields: [assignedUserId], references: [id])
+  role           String // maker | checker | adjudicator | verification_officer
+  assignedAt     DateTime    @default(now())
+}
+
+model Decision {
+  id               String   @id @default(cuid())
+  claimId          String
+  claim            Claim    @relation(fields: [claimId], references: [id])
+  decidedByUserId  String?
+  decidedByUser    User?    @relation(fields: [decidedByUserId], references: [id])
+  makerCheckerRole String // maker | checker | adjudicator
+  /// recommend_approve | recommend_reject | approve | reject | partial_approve | escalate | request_more_info
+  outcome          String
+  rationale        String?
+  createdAt        DateTime @default(now())
+}
+
+model DeficiencyRequest {
+  id          String    @id @default(cuid())
+  claimId     String
+  claim       Claim     @relation(fields: [claimId], references: [id])
+  title       String
+  description String
+  /// open | responded | resolved | waived
+  status      String    @default("open")
+  raisedAt    DateTime  @default(now())
+  respondedAt DateTime?
+  resolvedAt  DateTime?
+}
+
+model Dispute {
+  id               String    @id @default(cuid())
+  estateId         String
+  estate           Estate    @relation(fields: [estateId], references: [id])
+  raisedByPersonId String?
+  disputeType      String // competing_claimants | forged_document | conflicting_nomination | other
+  description      String
+  /// open | under_review | escalated_to_court | resolved | dismissed
+  status           String    @default("open")
+  createdAt        DateTime  @default(now())
+  resolvedAt       DateTime?
+}
+
+model CourtOrder {
+  id            String    @id @default(cuid())
+  estateId      String
+  estate        Estate    @relation(fields: [estateId], references: [id])
+  orderType     String // restraint | injunction | succession_determination | other
+  issuingCourt  String
+  summary       String
+  documentId    String?
+  effectiveFrom DateTime?
+  createdAt     DateTime  @default(now())
+}
+
+// =====================================================================================
+// SETTLEMENT
+// =====================================================================================
+
+model Payment {
+  id               String          @id @default(cuid())
+  claimId          String?
+  claim            Claim?          @relation(fields: [claimId], references: [id])
+  serviceRequestId String?
+  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  purpose          String          @default("claim_settlement") // claim_settlement | service_fee
+  amountBand       String // banded display, e.g. "₹1,00,000 – ₹5,00,000", never an exact balance in shared views
+  payeePersonId    String?
+  method           String // bank_transfer_simulated | cheque_simulated | upi_simulated
+  /// initiated | processed | failed | reversed
+  status           String          @default("initiated")
+  processedAt      DateTime?
+  createdAt        DateTime        @default(now())
+}
+
+model Transfer {
+  id           String    @id @default(cuid())
+  claimId      String
+  claim        Claim     @relation(fields: [claimId], references: [id])
+  transferType String // securities_transmission | account_ownership_transfer
+  toPersonId   String?
+  /// initiated | completed | failed
+  status       String    @default("initiated")
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model Mutation {
+  id                String    @id @default(cuid())
+  claimId           String
+  claim             Claim     @relation(fields: [claimId], references: [id])
+  assetId           String
+  asset             Asset     @relation(fields: [assetId], references: [id])
+  authorityName     String // sub-registrar / development authority (simulated)
+  /// application_filed | field_verification_pending | approved | rejected | mutated
+  status            String    @default("application_filed")
+  applicationNumber String?
+  createdAt         DateTime  @default(now())
+  completedAt       DateTime?
+}
+
+model RecordUpdate {
+  id         String   @id @default(cuid())
+  claimId    String
+  claim      Claim    @relation(fields: [claimId], references: [id])
+  updateType String // account_closure | ownership_update | nominee_removed | status_cessation
+  summary    String
+  createdAt  DateTime @default(now())
+}
+
+// =====================================================================================
+// NOTIFICATIONS, GRIEVANCE, FRAUD, AUDIT, SLA, RULES
+// =====================================================================================
+
+model Notification {
+  id           String      @id @default(cuid())
+  userId       String?
+  user         User?       @relation(fields: [userId], references: [id])
+  deathEventId String?
+  deathEvent   DeathEvent? @relation(fields: [deathEventId], references: [id])
+  channel      String // in_app | email_simulated | sms_simulated
+  title        String
+  body         String
+  readAt       DateTime?
+  createdAt    DateTime    @default(now())
+}
+
+model Communication {
+  id        String   @id @default(cuid())
+  claimId   String
+  claim     Claim    @relation(fields: [claimId], references: [id])
+  direction String // institution_to_claimant | claimant_to_institution | system
+  subject   String
+  body      String
+  createdAt DateTime @default(now())
+}
+
+model Grievance {
+  id               String          @id @default(cuid())
+  raisedByPersonId String?
+  institutionId    String?
+  institution      Institution?    @relation(fields: [institutionId], references: [id])
+  claimId          String?
+  serviceRequestId String?
+  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  subject          String
+  description      String
+  /// open | in_progress | resolved | escalated
+  status           String          @default("open")
+  createdAt        DateTime        @default(now())
+  resolvedAt       DateTime?
+
+  escalations Escalation[]
+  appeals     Appeal[]
+}
+
+model FraudSignal {
+  id              String    @id @default(cuid())
+  claimId         String?
+  claim           Claim?    @relation(fields: [claimId], references: [id])
+  subjectPersonId String?
+  subjectPerson   Person?   @relation("FraudSubjectPerson", fields: [subjectPersonId], references: [id])
+  signalType      String // payout_account_change | duplicate_claim | forged_document_suspected | claimant_identity_mismatch | rapid_multi_institution_claims
+  severity        String // low | medium | high
+  /// open | investigating | confirmed_fraud | false_positive | closed
+  status          String    @default("open")
+  details         String?
+  createdAt       DateTime  @default(now())
+  resolvedAt      DateTime?
+}
+
+/// Append-only from the application layer: never update or delete a row, only insert.
+model AuditEvent {
+  id            String   @id @default(cuid())
+  actorUserId   String?
+  actor         User?    @relation(fields: [actorUserId], references: [id])
+  actorRole     String?
+  entityType    String // e.g. "Claim", "DeathEvent", "AccessGrant"
+  entityId      String
+  action        String // e.g. "claim.approved", "access_grant.revoked"
+  claimId       String?
+  claim         Claim?   @relation(fields: [claimId], references: [id])
+  correlationId String?
+  metadata      String? // JSON-serialized, no sensitive raw identifiers per docs/SECURITY.md
+  createdAt     DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([claimId])
+}
+
+model SLA {
+  id            String      @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  processType   String // death_event_acknowledgement | claim_first_response | claim_settlement
+  targetDays    Int
+  createdAt     DateTime    @default(now())
+}
+
+model Jurisdiction {
+  id        String  @id @default(cuid())
+  level     String // national | state | district | local_body
+  name      String
+  stateCode String?
+
+  deathEvents DeathEvent[]
+}
+
+/// Configurable authority/entitlement rules — see docs/AUTHORITY_RULES.md. Stored as data, not
+/// hard-coded in UI components, and versioned so a rule change is auditable.
+model Rule {
+  id          String   @id @default(cuid())
+  ruleKey     String   @unique
+  title       String
+  description String
+  createdAt   DateTime @default(now())
+
+  versions RuleVersion[]
+}
+
+model RuleVersion {
+  id         String   @id @default(cuid())
+  ruleId     String
+  rule       Rule     @relation(fields: [ruleId], references: [id])
+  version    Int
+  /// JSON-serialized decision-matrix condition/output pairs, see src/lib/authority-engine.ts
+  definition String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@unique([ruleId, version])
+}
+
+// =====================================================================================================
+// LIFELONG CITIZEN ADMINISTRATION DOMAIN — Domains A–H of docs/CORRECTED_PRODUCT_THESIS.md
+// =====================================================================================================
+
+// -----------------------------------------------------------------------------------------------------
+// DOMAIN A: MASTER PROFILE & PROFILE CONSISTENCY
+// -----------------------------------------------------------------------------------------------------
+
+/// One canonical profile container per living Person — the "system of engagement" view, explicitly
+/// not itself an official government record (see docs/MASTER_PROFILE_AND_DISCREPANCIES.md).
+model CitizenProfile {
+  id                 String   @id @default(cuid())
+  personId           String   @unique
+  person             Person   @relation(fields: [personId], references: [id])
+  preferredLanguage  String   @default("en") // en | hi (see docs/ACCESSIBILITY.md for the i18n architecture)
+  accessibilityNeeds String? // free text, e.g. "Screen reader", "Large text"
+  residencyStatus    String   @default("resident") // resident | nri | foreign_national
+  citizenship        String   @default("India")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  fieldValues ProfileFieldValue[]
+  conflicts   ProfileConflict[]
+}
+
+/// Catalog of profile field *types* (legal_name, present_address, mobile_primary, ...). A lookup
+/// table rather than hard-coded UI strings, so new fields can be added without a schema change.
+model ProfileField {
+  id        String   @id @default(cuid())
+  fieldKey  String   @unique // legal_name | alternate_name | date_of_birth | present_address | permanent_address | mobile_primary | email_primary | marital_status | occupation
+  label     String
+  category  String // identity | contact | address | family | employment
+  createdAt DateTime @default(now())
+
+  values    ProfileFieldValue[]
+  conflicts ProfileConflict[]
+}
+
+/// One reported value of one field, from one source, at one point in time. Multiple rows for the
+/// same (profile, field) across different sources are exactly what powers the consistency view.
+model ProfileFieldValue {
+  id                  String         @id @default(cuid())
+  citizenProfileId    String
+  citizenProfile      CitizenProfile @relation(fields: [citizenProfileId], references: [id])
+  profileFieldId      String
+  profileField        ProfileField   @relation(fields: [profileFieldId], references: [id])
+  value               String
+  /// user_entered | verified_by_source
+  provenance          String         @default("user_entered")
+  sourceLabel         String // e.g. "Aadhaar (simulated)", "HDFC Bank KYC (simulated)", "Self-declared"
+  sourceInstitutionId String?
+  sourceInstitution   Institution?   @relation(fields: [sourceInstitutionId], references: [id])
+  isCurrentForSource  Boolean        @default(true) // false once superseded by a newer value from the same source
+  lastVerifiedAt      DateTime?
+  createdAt           DateTime       @default(now())
+
+  conflictsAsPrimary   ProfileConflict[] @relation("ConflictPrimaryValue")
+  conflictsAsAlternate ProfileConflict[] @relation("ConflictAlternateValue")
+
+  @@index([citizenProfileId, profileFieldId])
+}
+
+/// A detected discrepancy between two source values for the same field. The platform never
+/// auto-declares a winner — see docs/MASTER_PROFILE_AND_DISCREPANCIES.md.
+model ProfileConflict {
+  id               String            @id @default(cuid())
+  citizenProfileId String
+  citizenProfile   CitizenProfile    @relation(fields: [citizenProfileId], references: [id])
+  profileFieldId   String
+  profileField     ProfileField      @relation(fields: [profileFieldId], references: [id])
+  primaryValueId   String
+  primaryValue     ProfileFieldValue @relation("ConflictPrimaryValue", fields: [primaryValueId], references: [id])
+  alternateValueId String
+  alternateValue   ProfileFieldValue @relation("ConflictAlternateValue", fields: [alternateValueId], references: [id])
+  /// open | acknowledged | resolved_via_correction_request | dismissed_not_a_conflict
+  status           String            @default("open")
+  detectedAt       DateTime          @default(now())
+  resolvedAt       DateTime?
+}
+
+// -----------------------------------------------------------------------------------------------------
+// DOMAIN B: INSTITUTIONAL RELATIONSHIP GRAPH
+// -----------------------------------------------------------------------------------------------------
+
+/// One row per (Person, Institution) relationship of any kind — government identity record,
+/// licence, financial account, employer, utility connection, or business registration. Financial
+/// holdings additionally get a linked `Asset` row (from the Legacy & Succession domain) so estate
+/// and life-administration views share the same underlying holding rather than duplicating it.
+model InstitutionRelationship {
+  id                        String         @id @default(cuid())
+  personId                  String
+  person                    Person         @relation(fields: [personId], references: [id])
+  institutionId             String
+  institution               Institution    @relation(fields: [institutionId], references: [id])
+  /// government_identity | government_licence | financial_account | employer | utility | business | education
+  relationshipType          String
+  label                     String // "Aadhaar", "HDFC Bank Savings Account", "Employer: Acme Pvt Ltd"
+  referenceNumberMasked     String?
+  identifierUsed            String? // which PersonIdentifier type was used to establish/match this relationship
+  linkedAssetId             String?        @unique
+  linkedAsset               Asset?         @relation(fields: [linkedAssetId], references: [id])
+  /// active | inactive | dormant | closed | under_verification
+  status                    String         @default("active")
+  registeredAddressSnapshot String?
+  registeredNomineeSummary  String? // human-readable, e.g. "Spouse — 100%" — detail lives in Nomination
+  renewalDueAt              DateTime?
+  connectorId               String?
+  connector                 Connector?     @relation(fields: [connectorId], references: [id])
+  consentRecordId           String?
+  consentRecord             ConsentRecord? @relation(fields: [consentRecordId], references: [id])
+  verificationStatus        String         @default("unverified") // unverified | verified | verification_failed
+  lastSyncedAt              DateTime?
+  scenarioTag               String?
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
+
+  syncRuns         SourceSync[]
+  serviceRequests  ServiceRequest[]
+  lifeEventActions LifeEventAction[]
+  deadlines        Deadline[]
+
+  @@index([personId])
+  @@index([institutionId])
+}
+
+/// One sync attempt log for a relationship's connector — powers "last synchronised time" and
+/// graceful partial-failure handling.
+model SourceSync {
+  id                        String                  @id @default(cuid())
+  institutionRelationshipId String
+  institutionRelationship   InstitutionRelationship @relation(fields: [institutionRelationshipId], references: [id])
+  /// success | partial_failure | failed
+  status                    String
+  startedAt                 DateTime                @default(now())
+  completedAt               DateTime?
+  recordsSynced             Int?
+  failureReason             String?
+}
+
+// -----------------------------------------------------------------------------------------------------
+// DOMAIN C: DOCUMENT & EVIDENCE HUB (extends LegalDocument from the Legacy & Succession domain)
+// -----------------------------------------------------------------------------------------------------
+
+/// Extra life-administration metadata for a LegalDocument (issuer, expiry, sharing) without
+/// forcing every estate-domain document to carry fields it doesn't need.
+model DocumentProfile {
+  id                     String        @id @default(cuid())
+  legalDocumentId        String        @unique
+  legalDocument          LegalDocument @relation(fields: [legalDocumentId], references: [id])
+  issuer                 String?
+  issueDate              DateTime?
+  expiryDate             DateTime?
+  /// identity | address | tax | banking | investments | insurance | employment | education | property | vehicle | health | business | family | legal | estate
+  documentCategory       String
+  digitalSignatureStatus String? // signed_simulated | unsigned | not_applicable
+  permittedUses          String? // JSON array of purpose keys
+
+  shares   DocumentShare[]
+  renewals Renewal[]
+}
+
+model DocumentShare {
+  id                String          @id @default(cuid())
+  documentProfileId String
+  documentProfile   DocumentProfile @relation(fields: [documentProfileId], references: [id])
+  sharedWithLabel   String // "HDFC Bank — address update request", "Daughter (Family Assistant)"
+  purpose           String
+  sharedAt          DateTime        @default(now())
+  revokedAt         DateTime?
+}
+
+model Renewal {
+  id                String          @id @default(cuid())
+  documentProfileId String
+  documentProfile   DocumentProfile @relation(fields: [documentProfileId], references: [id])
+  dueDate           DateTime
+  /// upcoming | requested | completed | overdue
+  status            String          @default("upcoming")
+  serviceRequestId  String?
+  serviceRequest    ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+}
+
+/// A lightweight self-attestation / simulated e-sign event on a document or a service request.
+model Signature {
+  id               String          @id @default(cuid())
+  legalDocumentId  String?
+  serviceRequestId String?
+  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  signedByPersonId String
+  /// self_attestation_simulated | esign_simulated
+  method           String
+  signedAt         DateTime        @default(now())
+}
+
+// -----------------------------------------------------------------------------------------------------
+// DOMAIN D: SERVICE CATALOGUE & UNIFIED REQUEST ENGINE
+// -----------------------------------------------------------------------------------------------------
+
+model ServiceCatalogue {
+  id            String      @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  name          String
+
+  services ServiceDefinition[]
+}
+
+/// An institution-published service a citizen can request, and everything the request engine
+/// needs to build a checklist and normalise status for it.
+model ServiceDefinition {
+  id                 String           @id @default(cuid())
+  serviceCatalogueId String
+  serviceCatalogue   ServiceCatalogue @relation(fields: [serviceCatalogueId], references: [id])
+  /// new_application | correction | address_update | name_update | contact_update | nominee_update |
+  /// joint_holder_update | account_closure | account_reopening | document_renewal | record_linking |
+  /// duplicate_resolution | refund_request | benefit_application | tax_rectification | grievance |
+  /// appeal | complaint | claim | transmission | property_mutation | licence_renewal |
+  /// certificate_request | service_cancellation
+  serviceCategory    String
+  title              String
+  description        String
+  feeBand            String? // e.g. "Free", "₹100 – ₹500"
+  publishedSlaDays   Int?
+  requiresInPerson   Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+
+  eligibilityRules      EligibilityRule[]
+  requiredFields        RequiredField[]
+  requiredDocumentRules RequiredDocumentRule[]
+  channels              ServiceChannel[]
+  serviceRequests       ServiceRequest[]
+  fees                  ServiceFee[]
+  statusMappings        InstitutionStatusMapping[]
+}
+
+model ServiceChannel {
+  id                  String            @id @default(cuid())
+  serviceDefinitionId String
+  serviceDefinition   ServiceDefinition @relation(fields: [serviceDefinitionId], references: [id])
+  channelKey          String // online_portal | api | deep_link | in_person | post | agent_assisted
+  label               String
+  isPrimary           Boolean           @default(false)
+}
+
+model EligibilityRule {
+  id                  String            @id @default(cuid())
+  serviceDefinitionId String
+  serviceDefinition   ServiceDefinition @relation(fields: [serviceDefinitionId], references: [id])
+  description         String
+  conditionDefinition String // JSON-serialized condition, evaluated by src/lib/authority-engine.ts-style helpers
+}
+
+model RequiredField {
+  id                  String            @id @default(cuid())
+  serviceDefinitionId String
+  serviceDefinition   ServiceDefinition @relation(fields: [serviceDefinitionId], references: [id])
+  fieldKey            String
+  label               String
+  isMandatory         Boolean           @default(true)
+}
+
+model RequiredDocumentRule {
+  id                  String            @id @default(cuid())
+  serviceDefinitionId String
+  serviceDefinition   ServiceDefinition @relation(fields: [serviceDefinitionId], references: [id])
+  documentCategory    String
+  isMandatory         Boolean           @default(true)
+  reusePolicy         String            @default("reusable_if_verified_and_current") // reusable_if_verified_and_current | always_fresh_required
+}
+
+/// Maps an institution's own raw status vocabulary onto our normalised ServiceRequest.status set,
+/// so we can show both without ever silently overwriting what the institution actually said.
+model InstitutionStatusMapping {
+  id                  String            @id @default(cuid())
+  serviceDefinitionId String
+  serviceDefinition   ServiceDefinition @relation(fields: [serviceDefinitionId], references: [id])
+  rawStatusLabel      String
+  normalizedStatus    String // draft | information_required | ready_to_submit | submitted | acknowledged | under_verification | additional_information_required | under_review | approved | rejected | partially_completed | completed | escalated | disputed | cancelled | expired
+}
+
+/// The citizen-facing unified request object — one row regardless of which institution or service
+/// category is involved, so the Requests screen can list everything together.
+model ServiceRequest {
+  id                        String                   @id @default(cuid())
+  personId                  String
+  person                    Person                   @relation(fields: [personId], references: [id])
+  institutionRelationshipId String?
+  institutionRelationship   InstitutionRelationship? @relation(fields: [institutionRelationshipId], references: [id])
+  serviceDefinitionId       String
+  serviceDefinition         ServiceDefinition        @relation(fields: [serviceDefinitionId], references: [id])
+  lifeEventId               String?
+  lifeEvent                 LifeEvent?               @relation(fields: [lifeEventId], references: [id])
+  title                     String
+  /// draft | information_required | ready_to_submit | submitted | acknowledged | under_verification |
+  /// additional_information_required | under_review | approved | rejected | partially_completed |
+  /// completed | escalated | disputed | cancelled | expired
+  normalizedStatus          String                   @default("draft")
+  /// executable via api | initiable via integration | deep_link_redirect | generated_form_packet |
+  /// assisted_digital_workflow | in_person_required | requires_institution_approval |
+  /// requires_legal_intervention | unsupported
+  executionMethod           String
+  userDeadlineAt            DateTime?
+  institutionDeadlineAt     DateTime?
+  scenarioTag               String?
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+
+  application    Application?
+  statusEvents   RequestStatus[]
+  submissions    Submission[]
+  appointments   Appointment[]
+  inPersonTasks  InPersonTask[]
+  deadlines      Deadline[]
+  renewals       Renewal[]
+  signatures     Signature[]
+  grievances     Grievance[]
+  payments       Payment[]
+  delegatedTasks DelegatedTask[]
+  inboxThread    InboxThread?
+
+  @@index([personId, normalizedStatus])
+}
+
+/// The institution-side record of the same request: its own application number and raw status text.
+model Application {
+  id                String         @id @default(cuid())
+  serviceRequestId  String         @unique
+  serviceRequest    ServiceRequest @relation(fields: [serviceRequestId], references: [id])
+  applicationNumber String         @unique
+  officialStatusRaw String
+  channelUsed       String
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+}
+
+/// Append-only status history — the timeline a citizen sees on a request-details screen.
+model RequestStatus {
+  id                String         @id @default(cuid())
+  serviceRequestId  String
+  serviceRequest    ServiceRequest @relation(fields: [serviceRequestId], references: [id])
+  normalizedStatus  String
+  officialStatusRaw String?
+  note              String?
+  occurredAt        DateTime       @default(now())
+}
+
+/// One submission attempt/event (as distinct from the current-state Application row).
+model Submission {
+  id               String         @id @default(cuid())
+  serviceRequestId String
+  serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id])
+  channelUsed      String
+  /// simulated_success | simulated_failure | recorded_external_submission
+  outcome          String
+  submittedAt      DateTime       @default(now())
+}
+
+model Appointment {
+  id               String         @id @default(cuid())
+  serviceRequestId String
+  serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id])
+  location         String
+  scheduledFor     DateTime
+  /// scheduled | completed | missed | cancelled
+  status           String         @default("scheduled")
+}
+
+model InPersonTask {
+  id               String         @id @default(cuid())
+  serviceRequestId String
+  serviceRequest   ServiceRequest @relation(fields: [serviceRequestId], references: [id])
+  title            String
+  instructions     String
+  /// pending | done
+  status           String         @default("pending")
+}
+
+// -----------------------------------------------------------------------------------------------------
+// DOMAIN F: LIFE-EVENT ORCHESTRATION
+// -----------------------------------------------------------------------------------------------------
+
+/// Catalog of supported life events and their default action playbook.
+model LifeEventTemplate {
+  id          String   @id @default(cuid())
+  eventKey    String   @unique // address_change | mobile_number_change | name_correction | marriage | divorce | birth_or_adoption | turning_18 | first_job | job_change | job_loss | business_start | business_close | property_purchase | property_sale | vehicle_purchase | interstate_move | move_abroad | return_to_india | retirement | incapacity | hospitalisation | lost_documents | identity_theft | family_bereavement | account_owner_death
+  title       String
+  description String
+  createdAt   DateTime @default(now())
+
+  lifeEvents LifeEvent[]
+}
+
+/// One instance of a citizen going through a life event.
+model LifeEvent {
+  id                  String            @id @default(cuid())
+  personId            String
+  person              Person            @relation(fields: [personId], references: [id])
+  lifeEventTemplateId String
+  lifeEventTemplate   LifeEventTemplate @relation(fields: [lifeEventTemplateId], references: [id])
+  /// in_progress | completed | abandoned
+  status              String            @default("in_progress")
+  startedAt           DateTime          @default(now())
+  completedAt         DateTime?
+  progressPercent     Int               @default(0)
+  scenarioTag         String?
+
+  actions         LifeEventAction[]
+  serviceRequests ServiceRequest[]
+}
+
+/// One affected-institution action item within a life event's plan.
+model LifeEventAction {
+  id                        String                   @id @default(cuid())
+  lifeEventId               String
+  lifeEvent                 LifeEvent                @relation(fields: [lifeEventId], references: [id])
+  institutionRelationshipId String?
+  institutionRelationship   InstitutionRelationship? @relation(fields: [institutionRelationshipId], references: [id])
+  title                     String
+  /// mandatory | recommended | optional
+  priority                  String
+  sequenceOrder             Int
+  dependsOnActionId         String?
+  /// executable via api | initiable via integration | deep_link_redirect | generated_form_packet |
+  /// assisted_digital_workflow | in_person_required | requires_institution_approval |
+  /// requires_legal_intervention | unsupported
+  executionMethod           String
+  /// pending | in_progress | completed | skipped
+  status                    String                   @default("pending")
+}
+
+/// A generic deadline that can attach to an institution relationship or a service request.
+model Deadline {
+  id                        String                   @id @default(cuid())
+  title                     String
+  dueAt                     DateTime
+  institutionRelationshipId String?
+  institutionRelationship   InstitutionRelationship? @relation(fields: [institutionRelationshipId], references: [id])
+  serviceRequestId          String?
+  serviceRequest            ServiceRequest?          @relation(fields: [serviceRequestId], references: [id])
+  /// upcoming | due_soon | overdue | met
+  status                    String                   @default("upcoming")
+}
+
+// -----------------------------------------------------------------------------------------------------
+// DOMAIN E: UNIFIED COMMUNICATION & NOTIFICATION CENTRE
+// -----------------------------------------------------------------------------------------------------
+
+model InboxThread {
+  id               String          @id @default(cuid())
+  personId         String
+  person           Person          @relation(fields: [personId], references: [id])
+  institutionId    String?
+  institution      Institution?    @relation(fields: [institutionId], references: [id])
+  serviceRequestId String?         @unique
+  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  subject          String
+  /// notice | request_update | reminder | scheme_announcement | security_alert | consent_request
+  threadType       String
+  createdAt        DateTime        @default(now())
+
+  messages Message[]
+}
+
+model Message {
+  id                   String      @id @default(cuid())
+  inboxThreadId        String
+  inboxThread          InboxThread @relation(fields: [inboxThreadId], references: [id])
+  senderLabel          String // verified sender display name
+  senderVerified       Boolean     @default(true)
+  importance           String      @default("normal") // low | normal | high | urgent
+  originalBody         String
+  plainLanguageSummary String?
+  suggestedNextAction  String?
+  fraudWarning         Boolean     @default(false)
+  channel              String      @default("in_app") // in_app | email_simulated | sms_simulated
+  createdAt            DateTime    @default(now())
+  readAt               DateTime?
+
+  notice Notice?
+}
+
+model Notice {
+  id                 String    @id @default(cuid())
+  messageId          String    @unique
+  message            Message   @relation(fields: [messageId], references: [id])
+  noticeNumber       String?
+  /// income_tax | insurance | banking | regulatory | other
+  noticeType         String
+  responseDeadline   DateTime?
+  checklistGenerated Boolean   @default(false)
+}
+
+// -----------------------------------------------------------------------------------------------------
+// DOMAIN H: CONSENT, DELEGATED ACCESS & REPRESENTATION
+// -----------------------------------------------------------------------------------------------------
+
+model ConsentPurpose {
+  id          String @id @default(cuid())
+  purposeKey  String @unique // address_verification | asset_discovery | tax_notice_access | document_fetch | profile_sync
+  label       String
+  description String
+
+  scopes ConsentScope[]
+}
+
+/// Granular scope for a ConsentRecord — which institution/account/document/request/time period.
+model ConsentScope {
+  id                String         @id @default(cuid())
+  consentRecordId   String
+  consentRecord     ConsentRecord  @relation(fields: [consentRecordId], references: [id])
+  consentPurposeId  String
+  consentPurpose    ConsentPurpose @relation(fields: [consentPurposeId], references: [id])
+  institutionId     String?
+  scopedEntityLabel String? // e.g. "HDFC Bank Savings — ...4821" for display only, never a raw identifier
+  validFrom         DateTime       @default(now())
+  validTo           DateTime?
+
+  dataShares DataShare[]
+}
+
+/// A record of data actually disclosed under a consent scope — the audit of what was shared.
+model DataShare {
+  id              String       @id @default(cuid())
+  consentScopeId  String
+  consentScope    ConsentScope @relation(fields: [consentScopeId], references: [id])
+  sharedWithLabel String
+  fieldsShared    String // JSON array of field keys, never raw values
+  sharedAt        DateTime     @default(now())
+}
+
+/// A CA, lawyer, adviser, or other authorised professional acting for a Person under explicit
+/// delegated scope — distinct from a Trusted Contact (platform access role, see docs/TERMINOLOGY.md).
+model ProfessionalRepresentative {
+  id                     String    @id @default(cuid())
+  principalPersonId      String
+  principalPerson        Person    @relation("PrincipalPerson", fields: [principalPersonId], references: [id])
+  representativePersonId String
+  representativePerson   Person    @relation("RepresentativePerson", fields: [representativePersonId], references: [id])
+  professionType         String // chartered_accountant | lawyer | financial_adviser | other_authorised_service_provider
+  /// active | revoked
+  status                 String    @default("active")
+  createdAt              DateTime  @default(now())
+  revokedAt              DateTime?
+
+  delegatedTasks DelegatedTask[]
+}
+
+/// A specific task delegated to a Family Administrator or Professional Representative, with a
+/// permission tier that is never allowed to imply legal authority or ownership.
+model DelegatedTask {
+  id                           String                      @id @default(cuid())
+  assistantPersonId            String
+  assistantPerson              Person                      @relation("AssistantPerson", fields: [assistantPersonId], references: [id])
+  professionalRepresentativeId String?
+  professionalRepresentative   ProfessionalRepresentative? @relation(fields: [professionalRepresentativeId], references: [id])
+  serviceRequestId             String?
+  serviceRequest               ServiceRequest?             @relation(fields: [serviceRequestId], references: [id])
+  /// permission_to_view | permission_to_assist | permission_to_prepare | permission_to_submit | permission_to_sign | permission_to_receive_communication
+  permissionTier               String
+  /// pending_owner_approval | approved | rejected | completed
+  status                       String                      @default("pending_owner_approval")
+  createdAt                    DateTime                    @default(now())
+  decidedAt                    DateTime?
+}
+
+/// Generic escalation wrapper (covers both Appeal and Escalation from the spec — see
+/// docs/DATA_MODEL.md consolidation notes) with an `escalationType` distinguishing the two.
+model Escalation {
+  id             String    @id @default(cuid())
+  grievanceId    String
+  grievance      Grievance @relation(fields: [grievanceId], references: [id])
+  escalationType String // appeal | grievance_escalation | sla_breach_escalation
+  escalatedTo    String // e.g. "Nodal Officer", "Ombudsman (simulated)"
+  reason         String
+  /// open | resolved
+  status         String    @default("open")
+  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime?
+}
+
+model Appeal {
+  id               String    @id @default(cuid())
+  grievanceId      String
+  grievance        Grievance @relation(fields: [grievanceId], references: [id])
+  groundsForAppeal String
+  /// filed | under_review | allowed | dismissed
+  status           String    @default("filed")
+  filedAt          DateTime  @default(now())
+  decidedAt        DateTime?
+}
+
+model ServiceFee {
+  id                  String            @id @default(cuid())
+  serviceDefinitionId String
+  serviceDefinition   ServiceDefinition @relation(fields: [serviceDefinitionId], references: [id])
+  label               String // "Application fee", "Late renewal penalty"
+  amountBand          String
+  isMandatory         Boolean           @default(true)
+}

@@ -1,0 +1,11 @@
+# Vercel CLI deploys from the local filesystem, not git — .gitignore alone isn't enough to keep
+# a local .env out of the uploaded bundle (see the incident this file fixes: a stray local .env
+# shipped in a deploy and short-circuited the /tmp SQLite fallback in src/lib/db.ts with a
+# read-only-filesystem error). Never remove this without understanding why it's here.
+.env
+.env.*
+!.env.example
+
+test-results/
+playwright-report/
+tests-e2e/

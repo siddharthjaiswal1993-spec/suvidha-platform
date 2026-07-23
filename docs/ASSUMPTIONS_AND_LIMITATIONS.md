@@ -165,8 +165,17 @@ means:
 - Data written during a demo session is not durable across deployments or, in general, across
   Vercel's automatic scaling of function instances — this is a demo convenience, not a persistence
   guarantee.
+- **This isn't limited to different citizens/logins in the same demo** — Vercel doesn't guarantee
+  request affinity to the same function instance even for consecutive requests in one browser
+  session. Running the v3 Playwright suite against the live production deployment surfaced this
+  directly: a single-persona, single-session flow (upload a document, then share it two requests
+  later) intermittently failed in production while passing reliably 22/22 locally, because the
+  "share" request landed on a different instance's `/tmp` copy than the "upload" request had
+  written to. This is worse than the original write-up implied and is called out here explicitly
+  rather than left as a narrower claim than reality.
 - This is explicitly **not** a production-grade persistence strategy and is never represented as
-  one anywhere in this documentation.
+  one anywhere in this documentation. The local e2e suite (`npm run test:e2e`), not a production
+  spot-check, is the authoritative correctness gate for exactly this reason.
 
 **Why Postgres wasn't used directly.** The deliberate trade-off was to keep local development
 completely self-contained: `npm run db:seed && npm run dev` works from a clean clone with no

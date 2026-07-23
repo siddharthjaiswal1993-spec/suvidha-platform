@@ -18,7 +18,7 @@ test.describe("Golden Flow D — Claimant tracking & institution claim processin
     await loginAs(page, "Neha");
     await expect(page).toHaveURL(/\/ops$/);
 
-    await page.getByRole("link", { name: "Claim queue" }).click();
+    await page.getByRole("link", { name: "Claims & Succession" }).click();
     await expect(page).toHaveURL(/\/ops\/claims$/);
     await page.getByText("SLI-CLM-990331").click();
 

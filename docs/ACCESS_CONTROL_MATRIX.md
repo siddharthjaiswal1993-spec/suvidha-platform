@@ -5,6 +5,15 @@ A full role × capability matrix for every persona across both product domains. 
 documents explain the *mechanism*; this document is the *reference table* an implementer or
 reviewer checks a specific role against.
 
+**This table is now backed by real, server-enforced code**, not only documented intent:
+`src/lib/authz/permissions.ts` defines the exact same role → permission mapping in a type-checked
+TypeScript constant, `src/lib/authz/guards.ts` and `resource-access.ts` enforce ownership/tenancy/
+state-machine legality on every Server Action, and `tests-e2e/golden-flow-i-negative-authorization.spec.ts`
+proves several rows of this table hold at runtime (cross-citizen and cross-institution access
+attempts, an auditor invoking a decision form, a maker attempting to also be the checker on their
+own case). If this document and `src/lib/authz/permissions.ts` ever disagree, the code is correct
+and this document is stale.
+
 **Reading the table:** "Own data" means data about the person's own record (their own `Person`,
 `EstatePlan`, `ServiceRequest`, etc.). "Others' data" always names the specific condition that must
 hold — no role sees others' data unconditionally. "Financial balances" specifically means exact

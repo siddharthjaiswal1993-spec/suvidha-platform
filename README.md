@@ -34,9 +34,26 @@ Start here:
   **execution method** (API / integration / deep-link / generated packet / assisted workflow /
   in-person / approval-required / unsupported) — see
   [`docs/SERVICE_REQUEST_ENGINE.md`](docs/SERVICE_REQUEST_ENGINE.md).
-- **~100 Prisma models** across the Legacy & Succession domain (estate planning, death-event
+- **Server-enforced authorization**, not just hidden UI. `src/lib/authz/` (permissions, guards,
+  resource-access, policies) independently re-verifies role, ownership, institution tenancy, and
+  state-machine legality on every Server Action — a citizen changing a URL, or an officer from the
+  wrong institution, gets rejected server-side even though the UI never offers them the action in
+  the first place. Maker and checker are enforced as different users. See
+  [`docs/ACCESS_CONTROL_MATRIX.md`](docs/ACCESS_CONTROL_MATRIX.md).
+- **The address-change life event is the flagship, fully-wired cross-domain journey**: it creates
+  real per-institution `ServiceRequest`s with a genuine mix of execution methods (one instant API
+  completion, one simulated integration, one manual self-report, and one that goes through real
+  institution review — deficiency → citizen response → maker recommendation → a *different*
+  checker's approval → institution completion), and completion reconciles the change back into
+  the citizen's profile and institution-relationship views. See
+  [`docs/LIFE_EVENT_ORCHESTRATION.md`](docs/LIFE_EVENT_ORCHESTRATION.md).
+- **~105 Prisma models** across the Legacy & Succession domain (estate planning, death-event
   lifecycle, claims, maker-checker) and the lifelong-administration domain (master profile,
-  institutional relationships, service requests, life events, inbox, delegated access).
+  institutional relationships, service requests, life events, inbox, delegated access) — sharing
+  `CaseAssignment`/`Decision`/`DeficiencyRequest` across both rather than duplicating them.
+- **`src/config/capabilities.ts`** is the single source of truth for what's actually
+  functional vs. interface-only vs. documented-only per feature — every "known limitations" claim
+  in this README traces back to it, so the two can't silently drift apart.
 
 ## Technology stack
 
@@ -141,32 +158,44 @@ Every persona below is selectable with one click from `/login` — no credential
 |---|---|---|
 | R. Subramaniam | Registrar Officer | Death-event verification and institution matching |
 | Neha Kulkarni | Claims Officer (Suraksha Life Insurance) | Case workspace, authority-pathway recommendation, maker-checker decision |
-| Rohan Das | Verification Officer | Document/claimant verification |
-| Anita Rao / Suresh Menon | Maker / Checker (Ashoka National Bank) | The maker-checker approval pattern |
-| Priya Nambiar | Grievance Officer | Grievance queue |
-| V. Chandran | Auditor | Append-only audit log |
+| Rohan Das | Verification Officer (Suraksha Life Insurance) | Document/claimant verification |
+| Anita Rao | Maker (Ashoka National Bank) | Recommends a decision — cannot also approve it |
+| Suresh Menon | Checker (Ashoka National Bank) | Approves/rejects a maker's recommendation — must be a different user |
+| Priya Nambiar | Grievance Officer (Suraksha Life Insurance) | Grievance queue with mandatory resolution category/note/citizen-ack |
+| V. Chandran | Auditor (Ashoka National Bank) | Append-only audit log — read-only, cannot record decisions |
 
 ## Golden demo flows
 
 1. **Estate Planner onboarding & planning** — log in as Meera → `/home` → `/profile` (see the
    Aadhaar/PAN name and address discrepancies) → `/institutions` → `/legacy/planning` (readiness
    score, nomination gaps, Trusted Contacts, will & executor).
-2. **Address-change life event** — as Meera, `/life-events` → open "Moving to a new address" →
-   mark actions done and watch progress update, each with an honest execution-method label.
-3. **Family assisted access** — as Meera, `/family-access` → approve Divya's pending delegated
+2. **Address-change life event** — as Meera, `/life-events` → open "Moving to a new address" → see
+   a distinct action per execution method: complete the City Electricity Board action instantly
+   (direct API), and self-report the Acme Innovations one with a reference number and date
+   (manual, marked citizen-reported-not-institution-verified).
+3. **Address-change institution review loop (the primary end-to-end outcome)** — as Meera, respond
+   to the open deficiency on the pre-staged Ashoka National Bank request → sign in as Anita (maker)
+   and recommend approval → sign in as Suresh (checker) and approve, then complete the institution
+   update → sign back in as Meera and see `/institutions` now show the new address, sourced from
+   Ashoka National Bank. Covered end to end by `tests-e2e/golden-flow-g-*.spec.ts`.
+4. **Family assisted access** — as Meera, `/family-access` → approve Divya's pending delegated
    task.
-4. **Smooth claim** — log in as Deepa → `/legacy/claim` → open the Ashoka National Bank claim →
+5. **Smooth claim** — log in as Deepa → `/legacy/claim` → open the Ashoka National Bank claim →
    see the completed workflow timeline and recorded payout.
-5. **Institution claim processing** — log in as Neha (Claims Officer) → `/ops/claims` → open the
+6. **Institution claim processing** — log in as Neha (Claims Officer) → `/ops/claims` → open the
    Suraksha Life Insurance case → see the authority-pathway recommendation → record a
    maker/checker decision.
-6. **No-will, multiple-heirs claim** — log in as Lakshmi → `/legacy/claim` → see the open
+7. **No-will, multiple-heirs claim** — log in as Lakshmi → `/legacy/claim` → see the open
    deficiency request asking for a succession certificate.
-7. **False-death correction** — log in as Fathima → `/legacy` (see the flag banner) →
+8. **False-death correction** — log in as Fathima → `/legacy` (see the flag banner) →
    `/legacy/status-correction` → confirm re-verification → see the record corrected and
    restrictions reversed.
+9. **Authorization abuse is rejected** — a claimant guessing another claimant's claim URL, a
+   citizen guessing another citizen's request URL, an officer opening another institution's case,
+   and an auditor invoking a decision form directly all fail server-side. Covered by
+   `tests-e2e/golden-flow-i-negative-authorization.spec.ts`.
 
-All seven are covered by Playwright specs in `tests-e2e/`.
+All nine are covered by Playwright specs in `tests-e2e/`.
 
 ---
 
@@ -183,8 +212,9 @@ All seven are covered by Playwright specs in `tests-e2e/`.
   sources cited in `docs/OFFICIAL_SOURCES.md`).
 - **The "Life Admin Assistant" is a deterministic, grounded simulation, not a live LLM** — see
   `docs/AI_ASSISTANT.md` for exactly what it does and why.
-- **Not every institution category in India is modeled**, and Hindi localisation covers primary
-  navigation and key surfaces, not every string. Full list of scope decisions in
+- **Not every institution category in India is modeled.** A dictionary-based i18n architecture
+  exists and the language switcher works, but Hindi coverage is not the current product priority —
+  English is the primary, default experience. Full list of scope decisions in
   `docs/ASSUMPTIONS_AND_LIMITATIONS.md`.
 - **This is not legal, tax, or financial advice.** Final legal/inheritance determinations always
   route to human, institution, or court review — the authority-pathway engine
@@ -205,15 +235,19 @@ All seven are covered by Playwright specs in `tests-e2e/`.
 ## Repository structure
 
 ```
-docs/                     Full documentation set (33 files) — start with docs/PRD.md
+docs/                     Full documentation set (38 files) — start with docs/PRD.md
 prisma/schema.prisma       The full data model (source of truth — see docs/DATA_MODEL.md)
 prisma/seed.ts              Seed script for every demo persona and scenario
 src/app/(public)/          Landing, how-it-works, login, and other unauthenticated pages
 src/app/(citizen)/          The citizen-facing app: profile, institutions, documents, requests,
                              inbox, life events, financial admin, family access, legacy & succession
-src/app/ops/                 The government/institution operations console
+src/app/ops/                 The government/institution operations console, including the general
+                              Service Requests queue/workspace (not just Legacy & Succession claims)
 src/components/ui/           Hand-rolled design-system primitives
-src/components/domain/       Product-specific shared components (nav, badges, topbar)
-src/lib/engines/             The authority-pathway and permission-grant decision engines
-tests-e2e/                    Playwright specs for the golden demo flows
+src/components/domain/       Product-specific shared components (nav, badges, topbar, mobile drawer)
+src/config/capabilities.ts    The capability registry — source of truth for what's real vs. simulated
+src/lib/authz/                Server-enforced permissions, ownership/tenancy guards, and policies
+src/lib/engines/              The authority-pathway and permission-grant decision engines
+src/lib/reconciliation.ts     Reconciles a citizen's profile once an institution completes a change
+tests-e2e/                    Playwright specs for the golden demo flows, including negative-authz
 ```

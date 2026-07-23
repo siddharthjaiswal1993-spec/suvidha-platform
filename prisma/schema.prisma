@@ -802,42 +802,56 @@ model SubmittedEvidence {
   createdAt         DateTime       @default(now())
 }
 
+/// Handles review-team assignment for BOTH the Legacy & Succession Claim workflow and the
+/// lifelong-administration ServiceRequest workflow — one shared maker/checker/verification-officer
+/// assignment model rather than duplicating it per domain (consistent with how Payment/Grievance
+/// already span both domains). Exactly one of claimId/serviceRequestId is set.
 model CaseAssignment {
-  id             String      @id @default(cuid())
-  claimId        String
-  claim          Claim       @relation(fields: [claimId], references: [id])
-  institutionId  String
-  institution    Institution @relation(fields: [institutionId], references: [id])
-  assignedUserId String?
-  assignedUser   User?       @relation(fields: [assignedUserId], references: [id])
-  role           String // maker | checker | adjudicator | verification_officer
-  assignedAt     DateTime    @default(now())
+  id               String          @id @default(cuid())
+  claimId          String?
+  claim            Claim?          @relation(fields: [claimId], references: [id])
+  serviceRequestId String?
+  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  institutionId    String
+  institution      Institution     @relation(fields: [institutionId], references: [id])
+  assignedUserId   String?
+  assignedUser     User?           @relation(fields: [assignedUserId], references: [id])
+  role             String // maker | checker | adjudicator | verification_officer
+  assignedAt       DateTime        @default(now())
 }
 
+/// A single maker-checker-adjudicator decision event, shared across Claim and ServiceRequest.
+/// Enforcement that a checker cannot approve their own maker recommendation happens in
+/// src/lib/authz/guards.ts, not in the schema — see requireDifferentMakerChecker().
 model Decision {
-  id               String   @id @default(cuid())
-  claimId          String
-  claim            Claim    @relation(fields: [claimId], references: [id])
+  id               String          @id @default(cuid())
+  claimId          String?
+  claim            Claim?          @relation(fields: [claimId], references: [id])
+  serviceRequestId String?
+  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
   decidedByUserId  String?
-  decidedByUser    User?    @relation(fields: [decidedByUserId], references: [id])
+  decidedByUser    User?           @relation(fields: [decidedByUserId], references: [id])
   makerCheckerRole String // maker | checker | adjudicator
   /// recommend_approve | recommend_reject | approve | reject | partial_approve | escalate | request_more_info
   outcome          String
   rationale        String?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime        @default(now())
 }
 
+/// A request for more evidence, shared across Claim and ServiceRequest — see docs/SERVICE_REQUEST_ENGINE.md.
 model DeficiencyRequest {
-  id          String    @id @default(cuid())
-  claimId     String
-  claim       Claim     @relation(fields: [claimId], references: [id])
-  title       String
-  description String
+  id               String          @id @default(cuid())
+  claimId          String?
+  claim            Claim?          @relation(fields: [claimId], references: [id])
+  serviceRequestId String?
+  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  title            String
+  description      String
   /// open | responded | resolved | waived
-  status      String    @default("open")
-  raisedAt    DateTime  @default(now())
-  respondedAt DateTime?
-  resolvedAt  DateTime?
+  status           String    @default("open")
+  raisedAt         DateTime  @default(now())
+  respondedAt      DateTime?
+  resolvedAt       DateTime?
 }
 
 model Dispute {
@@ -959,6 +973,10 @@ model Grievance {
   description      String
   /// open | in_progress | resolved | escalated
   status           String          @default("open")
+  /// service_delay | incorrect_information | fraud_concern | poor_service | policy_dispute | other
+  resolutionCategory String?
+  resolutionNote     String?
+  citizenCommunicationSent Boolean  @default(false)
   createdAt        DateTime        @default(now())
   resolvedAt       DateTime?
 
@@ -1344,24 +1362,33 @@ model ServiceRequest {
   /// assisted_digital_workflow | in_person_required | requires_institution_approval |
   /// requires_legal_intervention | unsupported
   executionMethod           String
+  /// Denormalised, human-readable summary of what's being requested (e.g. "New address: 22 MG
+  /// Road, Bengaluru") — a pragmatic substitute for a fully normalised submitted-field-value
+  /// table, sufficient for a prototype's request workspace and citizen-facing summary screens.
+  requestedValueSummary     String?
+  documentIdEvidence        String?
   userDeadlineAt            DateTime?
   institutionDeadlineAt     DateTime?
   scenarioTag               String?
   createdAt                 DateTime                 @default(now())
   updatedAt                 DateTime                 @updatedAt
 
-  application    Application?
-  statusEvents   RequestStatus[]
-  submissions    Submission[]
-  appointments   Appointment[]
-  inPersonTasks  InPersonTask[]
-  deadlines      Deadline[]
-  renewals       Renewal[]
-  signatures     Signature[]
-  grievances     Grievance[]
-  payments       Payment[]
-  delegatedTasks DelegatedTask[]
-  inboxThread    InboxThread?
+  application        Application?
+  statusEvents       RequestStatus[]
+  submissions        Submission[]
+  appointments       Appointment[]
+  inPersonTasks      InPersonTask[]
+  deadlines          Deadline[]
+  renewals           Renewal[]
+  signatures         Signature[]
+  grievances         Grievance[]
+  payments           Payment[]
+  delegatedTasks     DelegatedTask[]
+  inboxThread        InboxThread?
+  caseAssignments    CaseAssignment[]
+  decisions          Decision[]
+  deficiencyRequests DeficiencyRequest[]
+  lifeEventAction    LifeEventAction?
 
   @@index([personId, normalizedStatus])
 }
@@ -1453,13 +1480,18 @@ model LifeEvent {
   serviceRequests ServiceRequest[]
 }
 
-/// One affected-institution action item within a life event's plan.
+/// One affected-institution action item within a life event's plan. Once the citizen starts this
+/// action, a real ServiceRequest is created and linked here — the action's status then mirrors
+/// (or, for manual/in-person/tracking-only methods, is set directly by) that request's lifecycle
+/// rather than being a free-standing checkbox. See docs/LIFE_EVENT_ORCHESTRATION.md.
 model LifeEventAction {
   id                        String                   @id @default(cuid())
   lifeEventId               String
   lifeEvent                 LifeEvent                @relation(fields: [lifeEventId], references: [id])
   institutionRelationshipId String?
   institutionRelationship   InstitutionRelationship? @relation(fields: [institutionRelationshipId], references: [id])
+  serviceRequestId          String?                  @unique
+  serviceRequest            ServiceRequest?          @relation(fields: [serviceRequestId], references: [id])
   title                     String
   /// mandatory | recommended | optional
   priority                  String
@@ -1469,7 +1501,7 @@ model LifeEventAction {
   /// assisted_digital_workflow | in_person_required | requires_institution_approval |
   /// requires_legal_intervention | unsupported
   executionMethod           String
-  /// pending | in_progress | completed | skipped
+  /// pending | in_progress | citizen_reported_complete | completed | skipped
   status                    String                   @default("pending")
 }
 

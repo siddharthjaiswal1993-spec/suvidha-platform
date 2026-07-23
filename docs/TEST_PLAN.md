@@ -2,12 +2,11 @@
 
 ## Status note
 
-As of this writing, `src/lib/engines/` is an empty directory and no test files exist yet in the
-repository — the schema and terminology are finalized but the business-logic engines, UI, and their
-tests are the next construction phase (`docs/00_EXECUTIVE_SUMMARY.md`, `ROADMAP.md`). This document
-specifies the test strategy the build-out must implement and is written as the target contract for
-that work, using the real toolchain already configured in `package.json` (`vitest`, `@playwright/test`,
-`@testing-library/react`, `jsdom`).
+This document now describes the test suite as actually implemented, not a target contract for
+future work — 37 Vitest unit tests across `src/lib/engines/` and `src/lib/authz/`, and 15 Playwright
+tests across 8 spec files under `tests-e2e/`. Run `npm test` and `npm run test:e2e` to reproduce the numbers below;
+`src/config/capabilities.ts` records per-capability test status if this document and reality ever
+drift apart.
 
 ## Test strategy overview
 
@@ -77,28 +76,36 @@ auditable — a regression here has real consequences.
 
 ## 2. Playwright end-to-end tests
 
-Run via `npm run test:e2e` / `npm run test:e2e:ui`. Golden flows, mapped to the personas and
-sequence diagrams elsewhere in this doc set:
+Run via `npm run test:e2e` / `npm run test:e2e:ui`. Nine spec files under `tests-e2e/`, run serially
+(`workers: 1`) against a real dev server (or, via `PLAYWRIGHT_BASE_URL`, against the deployed Vercel
+instance — used to verify the live demo after each deploy):
 
-| # | Golden flow | Coverage status | Why |
+| # | Spec file | Golden flow | Why it's e2e-covered |
 |---|---|---|---|
-| 1 | Unified onboarding (signup → profile setup → first institution connected) | **Full e2e** | The activation path every other flow depends on; regressions here block everything downstream. |
-| 2 | Address-change life event (start → checklist → submit → status → inbox notification) | **Full e2e** | Maps directly to `docs/SEQUENCE_DIAGRAMS.md` §(a); the canonical demonstration of Domains D/E/F working together. |
-| 3 | Family-assisted access (invite → grant scope → assistant prepares → owner approves → submit) | **Full e2e** | Maps to §(c); the prepare/submit permission boundary is exactly the kind of subtle bug e2e coverage catches that a unit test alone might miss (real form state, real navigation). |
-| 4 | Post-death smooth claim processing by an institution claims officer (report → verify → match → claim → maker-checker → payout) | **Full e2e** | Maps to §(b); the highest-stakes flow in the product, covering the citizen, verification-officer, and claims-officer surfaces in one continuous test. |
-| 5 | False-death correction (challenge → re-verification → registrar correction → agency acknowledgements → restoration) | **Full e2e** | Maps to §(d); a safety-critical reversal path that must never be allowed to regress silently. |
-| 6 | Profile conflict detection and resolution | **Manual verification only** | Time-boxed prototype scope; the underlying rule (never auto-resolve) is unit-tested via the normalization/authority logic above, and the UI is smoke-tested manually per release rather than under full e2e, per `ASSUMPTIONS_AND_LIMITATIONS.md`. |
-| 7 | Institution ops console: service-request queue triage and deficiency requests | **Manual verification only** | Same reasoning — unit-tested at the logic layer (eligibility, status normalization), manually smoke-tested at the UI layer given the time-boxed scope. |
-| 8 | Grievance and appeal escalation | **Manual verification only** | Lower-frequency flow for the demo's purposes; covered by manual smoke testing and by the `Escalation`/`Appeal` unit tests around status transitions rather than a dedicated e2e spec. |
+| 1 | `golden-flow-a-onboarding-and-planning.spec.ts` | Estate Planner onboarding, profile discrepancies, institutions, estate readiness, Trusted Contact revocation | The activation path every other citizen flow depends on. |
+| 2 | `golden-flow-b-life-event.spec.ts` | Address-change life event: direct-API completion and manual self-report with reference number/date | Two of the four execution-method paths a citizen can take. |
+| 3 | `golden-flow-c-family-assisted-access.spec.ts` | Owner approves a Family Administrator's delegated task | The prepare/approve permission boundary — exactly the kind of bug a unit test alone would miss. |
+| 4 | `golden-flow-d-claimant-and-ops.spec.ts` | Claimant tracks a claim; Claims Officer reviews it and records a decision | Covers both the citizen and institution-officer surfaces for Legacy & Succession claims. |
+| 5 | `golden-flow-e-false-death-correction.spec.ts` | Challenge → re-verification → correction → restoration | A safety-critical reversal path that must never regress silently. |
+| 6 | `golden-flow-f-no-will-claimant.spec.ts` | Uninvited claimant, intestate succession, open deficiency | The harder claimant path — no prior Trusted Contact relationship. |
+| 7 | `golden-flow-g-address-change-institution-loop.spec.ts` | **The primary end-to-end outcome**: citizen deficiency response → maker recommendation → a *different* checker's approval → institution completion → profile reconciliation; plus the negative case of a maker attempting to also act as checker on their own case | Proves the whole cross-domain thesis — a life event resolved through real institution review, closing the loop back into the citizen's own profile — actually works, not just that each screen renders. |
+| 8 | `golden-flow-i-negative-authorization.spec.ts` | Cross-citizen, cross-institution, and role-based access attempts, all rejected server-side | Proves `src/lib/authz/` is load-bearing, not just documented — see `docs/ACCESS_CONTROL_MATRIX.md`. |
 
-**Why the split**: this is a time-boxed portfolio prototype (see `ASSUMPTIONS_AND_LIMITATIONS.md`),
-not a production program with an open-ended QA budget. The five flows with full e2e coverage are
-chosen because they are (a) the flows this documentation set's sequence diagrams describe in detail,
-(b) the flows most central to the product's core promise and safety guarantees, and (c) the flows
-most likely to have subtle multi-actor, multi-step regressions that only a real browser session
-would catch. The remaining flows are lower-frequency, lower-risk, or sufficiently covered by
-unit-level logic tests plus manual release-checklist verification that full e2e investment would be
-disproportionate to the risk it retires.
+**Manually verified, not under full e2e** (see `src/config/capabilities.ts` for the authoritative
+list): the document hub's document-detail/sharing screens, the inbox's reply/escalate actions
+beyond read-and-explain, the financial administration overview, and the Life Admin Assistant's
+non-golden-flow suggested questions. These are lower-frequency or lower-risk relative to the
+authorization and cross-domain-orchestration paths that get full e2e investment, consistent with
+this being a time-boxed prototype rather than a production QA program.
+
+**A note on dev-server flakiness this suite surfaced (and fixed) during development**: two real
+bugs were only caught by running this suite, not by manual clicking — (1) Next.js blocks a dev
+server's HMR websocket for a cross-origin test runner by default, which silently broke all
+client-side interactivity (radio/tab clicks) until `allowedDevOrigins` was set in `next.config.ts`;
+(2) `loginAs()` in `tests-e2e/helpers.ts` now explicitly waits for the post-login redirect to land
+before the next navigation, because occasionally proceeding immediately after the click raced ahead
+of the session cookie being committed under load, surfacing as a null-user crash on whichever page
+loaded next. Both are worth knowing if this suite ever becomes flaky again.
 
 ### Empty, loading, and error state testing expectations
 

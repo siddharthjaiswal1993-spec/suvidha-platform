@@ -7,26 +7,29 @@ import {
   Home, User, Building2, FileText, ListChecks, Inbox, CalendarClock,
   Landmark, Users, Shield, HelpCircle, Lock, Settings, Sparkles,
 } from "lucide-react";
+import { t, type Locale, type DictionaryKey } from "@/lib/i18n";
+import { useMobileNavClose } from "./mobile-nav-drawer";
 
-const NAV = [
-  { href: "/home", label: "Home", icon: Home },
-  { href: "/profile", label: "My Profile", icon: User },
-  { href: "/institutions", label: "My Institutions", icon: Building2 },
-  { href: "/documents", label: "Documents", icon: FileText },
-  { href: "/requests", label: "Requests", icon: ListChecks },
-  { href: "/inbox", label: "Inbox", icon: Inbox },
-  { href: "/life-events", label: "Life Events", icon: CalendarClock },
-  { href: "/financial", label: "Financial Administration", icon: Landmark },
-  { href: "/family-access", label: "Family & Delegated Access", icon: Users },
-  { href: "/legacy", label: "Legacy & Succession", icon: Shield },
-  { href: "/assistant", label: "Life Admin Assistant", icon: Sparkles },
-  { href: "/help", label: "Help & Grievances", icon: HelpCircle },
-  { href: "/consent", label: "Privacy & Consent", icon: Lock },
-  { href: "/settings", label: "Settings", icon: Settings },
+const NAV: Array<{ href: string; key: DictionaryKey; icon: typeof Home }> = [
+  { href: "/home", key: "nav_home", icon: Home },
+  { href: "/profile", key: "nav_profile", icon: User },
+  { href: "/institutions", key: "nav_institutions", icon: Building2 },
+  { href: "/documents", key: "nav_documents", icon: FileText },
+  { href: "/requests", key: "nav_requests", icon: ListChecks },
+  { href: "/inbox", key: "nav_inbox", icon: Inbox },
+  { href: "/life-events", key: "nav_life_events", icon: CalendarClock },
+  { href: "/financial", key: "nav_financial", icon: Landmark },
+  { href: "/family-access", key: "nav_family_access", icon: Users },
+  { href: "/legacy", key: "nav_legacy", icon: Shield },
+  { href: "/assistant", key: "nav_assistant", icon: Sparkles },
+  { href: "/help", key: "nav_help", icon: HelpCircle },
+  { href: "/consent", key: "nav_consent", icon: Lock },
+  { href: "/settings", key: "nav_settings", icon: Settings },
 ];
 
-export function CitizenNav() {
+export function CitizenNav({ locale = "en" }: { locale?: Locale }) {
   const pathname = usePathname();
+  const closeMobileNav = useMobileNavClose();
   return (
     <nav className="flex flex-col gap-0.5 p-3">
       {NAV.map((item) => {
@@ -36,13 +39,14 @@ export function CitizenNav() {
           <Link
             key={item.href}
             href={item.href}
+            onClick={closeMobileNav}
             className={cn(
               "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
               active ? "bg-secondary text-secondary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
             <Icon className="h-4 w-4 shrink-0" />
-            {item.label}
+            {t(item.key, locale)}
           </Link>
         );
       })}

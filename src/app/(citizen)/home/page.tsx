@@ -6,12 +6,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDate, daysUntil } from "@/lib/utils";
 import { AlertTriangle, ArrowRight, CheckCircle2, FileClock, Inbox as InboxIcon, Users } from "lucide-react";
+import { getPreferredLocale } from "@/lib/locale";
+import { t } from "@/lib/i18n";
 
 export const metadata = { title: "Home" };
 
 export default async function HomePage() {
   const user = await getCurrentUser();
   const personId = user!.personId!;
+  const locale = await getPreferredLocale(personId);
 
   const [conflicts, renewals, requests, unreadMessages, lifeEvents, trustedContacts, delegatedTasks, claimant] = await Promise.all([
     prisma.profileConflict.findMany({ where: { citizenProfile: { personId }, status: "open" }, include: { profileField: true } }),
@@ -43,28 +46,28 @@ export default async function HomePage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold">Welcome back, {user!.displayName.split(" ")[0]}</h1>
-        <p className="mt-1 text-muted-foreground">Here&apos;s what needs your attention today.</p>
+        <h1 className="text-2xl font-semibold">{t("home_welcome_back", locale)}, {user!.displayName.split(" ")[0]}</h1>
+        <p className="mt-1 text-muted-foreground">{t("home_subtitle", locale)}</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Needs attention</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t("home_needs_attention", locale)}</CardTitle>
             <AlertTriangle className="h-4 w-4 text-warning" />
           </CardHeader>
           <CardContent><p className="text-2xl font-semibold">{attentionItems.length}</p></CardContent>
         </Card>
         <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Unread inbox</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t("home_unread_inbox", locale)}</CardTitle>
             <InboxIcon className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent><p className="text-2xl font-semibold">{unreadMessages}</p></CardContent>
         </Card>
         <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Active Trusted Contacts</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t("home_active_trusted_contacts", locale)}</CardTitle>
             <CheckCircle2 className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent><p className="text-2xl font-semibold">{trustedContacts}</p></CardContent>
@@ -73,7 +76,7 @@ export default async function HomePage() {
 
       {attentionItems.length > 0 && (
         <Card>
-          <CardHeader><CardTitle>What needs your attention</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("home_needs_attention", locale)}</CardTitle></CardHeader>
           <CardContent className="space-y-2">
             {attentionItems.map((item) => {
               const Icon = item.icon;
@@ -90,7 +93,7 @@ export default async function HomePage() {
 
       {lifeEvents.length > 0 && (
         <Card>
-          <CardHeader><CardTitle>Life events in progress</CardTitle></CardHeader>
+          <CardHeader><CardTitle>{t("home_life_events_in_progress", locale)}</CardTitle></CardHeader>
           <CardContent className="space-y-2">
             {lifeEvents.map((le) => (
               <Link key={le.id} href={`/life-events/${le.id}`} className="flex items-center justify-between rounded-md border border-border p-3 text-sm hover:bg-muted">
@@ -103,7 +106,7 @@ export default async function HomePage() {
       )}
 
       <Card>
-        <CardHeader><CardTitle>Recent requests</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("home_recent_requests", locale)}</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           {requests.length === 0 && <p className="text-sm text-muted-foreground">No service requests yet.</p>}
           {requests.map((r) => (

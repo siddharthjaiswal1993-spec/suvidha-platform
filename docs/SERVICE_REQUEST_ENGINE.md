@@ -8,6 +8,17 @@ differentiator.** Source models: `ServiceCatalogue`, `ServiceDefinition`,
 `docs/TERMINOLOGY.md` §4 for the vocabulary and `docs/LIFE_EVENT_ORCHESTRATION.md`
 for how a life event generates a batch of these.
 
+> **The institution side is now real, not just documented.** `/ops/requests` (queue) and
+> `/ops/requests/[id]` (workspace) let an institution officer accept a request into review, raise a
+> `DeficiencyRequest`, and record a maker/checker `Decision` — `CaseAssignment`, `Decision`, and
+> `DeficiencyRequest` are shared between `ServiceRequest` and the Legacy & Succession `Claim` model
+> (each row sets exactly one of `claimId`/`serviceRequestId`) rather than being Claim-only. A
+> checker can never approve their own maker recommendation — enforced server-side in
+> `src/lib/authz/guards.ts`'s `requireDifferentMakerChecker()`, not just by UI convention. See
+> `docs/ARCHITECTURE.md`'s Authorization section and the worked example in section 8 below, which
+> now reflects the full citizen-response → maker → checker → institution-completion →
+> profile-reconciliation loop as it's actually implemented.
+
 ## 1. Why this is the differentiator
 
 Every institution already has its own way of taking a request — a portal, a branch

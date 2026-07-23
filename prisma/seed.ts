@@ -301,40 +301,57 @@ async function main() {
   });
   await prisma.renewal.create({ data: { documentProfileId: dlDocProfile.id, dueDate: daysFromNow(45), status: "upcoming" } });
 
-  // Service catalogue (representative slice) + service requests
-  const bankCatalogue = await prisma.serviceCatalogue.create({ data: { institutionId: ashokaBank.id, name: "Ashoka National Bank — Citizen Services" } });
-  const addressUpdateService = await prisma.serviceDefinition.create({
-    data: {
-      serviceCatalogueId: bankCatalogue.id, serviceCategory: "address_update", title: "Update registered address",
-      description: "Update the address linked to your savings account KYC.", feeBand: "Free", publishedSlaDays: 5, requiresInPerson: false,
-      requiredDocumentRules: { create: [{ documentCategory: "address", isMandatory: true, reusePolicy: "reusable_if_verified_and_current" }] },
-      requiredFields: { create: [{ fieldKey: "present_address", label: "New present address", isMandatory: true }] },
-      channels: { create: [{ channelKey: "online_portal", label: "Net banking portal", isPrimary: true }] },
-      statusMappings: { create: [
-        { rawStatusLabel: "Request Received", normalizedStatus: "submitted" },
-        { rawStatusLabel: "KYC Team Reviewing", normalizedStatus: "under_review" },
-        { rawStatusLabel: "Updated", normalizedStatus: "completed" },
-      ] },
-    },
-  });
+  // Service catalogue: every institution that participates in the address-change life event gets
+  // its own address_update ServiceDefinition, so requests are attributed to the right institution
+  // (see src/app/(citizen)/life-events/[id]/actions.ts, which looks these up by institution).
+  async function seedAddressUpdateService(institutionId: string, institutionName: string, requiresInPerson = false) {
+    const catalogue = await prisma.serviceCatalogue.create({ data: { institutionId, name: `${institutionName} — Citizen Services` } });
+    return prisma.serviceDefinition.create({
+      data: {
+        serviceCatalogueId: catalogue.id, serviceCategory: "address_update", title: "Update registered address",
+        description: `Update the address linked to your record at ${institutionName}.`, feeBand: "Free", publishedSlaDays: 5, requiresInPerson,
+        requiredDocumentRules: { create: [{ documentCategory: "address", isMandatory: true, reusePolicy: "reusable_if_verified_and_current" }] },
+        requiredFields: { create: [{ fieldKey: "present_address", label: "New present address", isMandatory: true }] },
+        channels: { create: [{ channelKey: requiresInPerson ? "in_person" : "online_portal", label: requiresInPerson ? "Branch/office visit" : "Online portal", isPrimary: true }] },
+        statusMappings: { create: [
+          { rawStatusLabel: "Request Received", normalizedStatus: "submitted" },
+          { rawStatusLabel: "KYC Team Reviewing", normalizedStatus: "under_review" },
+          { rawStatusLabel: "Updated", normalizedStatus: "completed" },
+        ] },
+      },
+    });
+  }
+
+  const ashokaAddressService = await seedAddressUpdateService(ashokaBank.id, "Ashoka National Bank");
+  const konkanAddressService = await seedAddressUpdateService(konkanBank.id, "Konkan Cooperative Bank");
+  const surakshaAddressService = await seedAddressUpdateService(surakshaInsurance.id, "Suraksha Life Insurance");
+  const parivahanAddressService = await seedAddressUpdateService(parivahan.id, "Parivahan (State Transport Department)", true);
+  const employerAddressService = await seedAddressUpdateService(employer.id, "Acme Innovations Pvt Ltd");
+  const electricityAddressService = await seedAddressUpdateService(electricityBoard.id, "City Electricity Board");
+  void konkanAddressService; void surakshaAddressService; void parivahanAddressService; void employerAddressService; void electricityAddressService;
+
   const nomineeUpdateService = await prisma.serviceDefinition.create({
-    data: { serviceCatalogueId: bankCatalogue.id, serviceCategory: "nominee_update", title: "Add or update nominee", description: "Register or change the nominee for this account.", feeBand: "Free", publishedSlaDays: 7, requiresInPerson: false },
+    data: { serviceCatalogueId: (await prisma.serviceCatalogue.findFirstOrThrow({ where: { institutionId: ashokaBank.id } })).id, serviceCategory: "nominee_update", title: "Add or update nominee", description: "Register or change the nominee for this account.", feeBand: "Free", publishedSlaDays: 7, requiresInPerson: false },
   });
 
+  // The Ashoka Bank address request — pre-staged mid-review with an open deficiency, so the
+  // Claims Officer → citizen-response → maker/checker → completion loop is fully demoable live.
   const addressRequest = await prisma.serviceRequest.create({
     data: {
-      personId: meera.id, institutionRelationshipId: irBank.id, serviceDefinitionId: addressUpdateService.id,
-      title: "Update address at Ashoka National Bank", normalizedStatus: "under_review", executionMethod: "initiable_via_integration",
+      personId: meera.id, institutionRelationshipId: irBank.id, serviceDefinitionId: ashokaAddressService.id,
+      title: "Update address at Ashoka National Bank", normalizedStatus: "additional_information_required", executionMethod: "requires_institution_approval",
+      requestedValueSummary: "New address: 22 Ganga Vihar Layout, Pune, MH 411045",
       userDeadlineAt: daysFromNow(20), scenarioTag: "living-planner",
       application: { create: { applicationNumber: "ANB-ADDR-88213", officialStatusRaw: "KYC Team Reviewing", channelUsed: "online_portal" } },
       statusEvents: { create: [
         { normalizedStatus: "submitted", officialStatusRaw: "Request Received", occurredAt: daysAgo(4) },
-        { normalizedStatus: "under_review", officialStatusRaw: "KYC Team Reviewing", occurredAt: daysAgo(1) },
+        { normalizedStatus: "under_review", officialStatusRaw: "KYC Team Reviewing", occurredAt: daysAgo(2) },
+        { normalizedStatus: "additional_information_required", note: "A clearer address-proof document is required — the uploaded copy is illegible in one corner.", occurredAt: daysAgo(1) },
       ] },
       submissions: { create: [{ channelUsed: "online_portal", outcome: "simulated_success", submittedAt: daysAgo(4) }] },
+      deficiencyRequests: { create: [{ title: "Clearer address-proof document required", description: "The uploaded address-proof document is partially illegible. Please submit a clearer copy or an alternative document (e.g. a recent utility bill) showing the new address in full.", status: "open" }] },
     },
   });
-  void nomineeUpdateService; void addressRequest;
 
   const fdNomineeRequest = await prisma.serviceRequest.create({
     data: {
@@ -366,16 +383,20 @@ async function main() {
     templates[key] = await prisma.lifeEventTemplate.create({ data: { eventKey: key, title: templateTitles[key], description: `Guided plan for: ${templateTitles[key]}` } });
   }
 
+  // Execution-method mix deliberately covers every honesty label the golden flow needs to
+  // demonstrate: one direct API completion, one simulated integration, one deep-link, one
+  // generated-form-packet, one in-person-required, one assisted workflow, and one that's already
+  // mid-review at an institution (with an open deficiency) so the maker-checker loop is live-demoable.
   const addressLifeEvent = await prisma.lifeEvent.create({
-    data: { personId: meera.id, lifeEventTemplateId: templates.address_change.id, status: "in_progress", progressPercent: 35, scenarioTag: "living-planner",
+    data: { personId: meera.id, lifeEventTemplateId: templates.address_change.id, status: "in_progress", progressPercent: 14, scenarioTag: "living-planner",
       actions: { create: [
         { title: "Update address on Aadhaar", institutionRelationshipId: irAadhaar.id, priority: "mandatory", sequenceOrder: 1, executionMethod: "deep_link_redirect", status: "completed" },
-        { title: "Update address at Ashoka National Bank", institutionRelationshipId: irBank.id, priority: "mandatory", sequenceOrder: 2, executionMethod: "initiable_via_integration", status: "in_progress" },
+        { title: "Update address at Ashoka National Bank", institutionRelationshipId: irBank.id, priority: "mandatory", sequenceOrder: 2, executionMethod: "requires_institution_approval", status: "in_progress", serviceRequestId: addressRequest.id },
         { title: "Update address at Konkan Cooperative Bank", institutionRelationshipId: irFD.id, priority: "mandatory", sequenceOrder: 3, executionMethod: "generated_form_packet", status: "pending" },
-        { title: "Update address with Suraksha Life Insurance", institutionRelationshipId: irInsurance.id, priority: "mandatory", sequenceOrder: 4, executionMethod: "assisted_digital_workflow", status: "pending" },
+        { title: "Update address with Suraksha Life Insurance", institutionRelationshipId: irInsurance.id, priority: "mandatory", sequenceOrder: 4, executionMethod: "initiable_via_integration", status: "pending" },
         { title: "Update address on driving licence", institutionRelationshipId: irDL.id, priority: "recommended", sequenceOrder: 5, executionMethod: "in_person_required", status: "pending" },
         { title: "Update address with employer HR", institutionRelationshipId: irEmployer.id, priority: "recommended", sequenceOrder: 6, executionMethod: "assisted_digital_workflow", status: "pending" },
-        { title: "Update address for electricity connection", institutionRelationshipId: irElectricity.id, priority: "optional", sequenceOrder: 7, executionMethod: "deep_link_redirect", status: "pending" },
+        { title: "Update address for electricity connection", institutionRelationshipId: irElectricity.id, priority: "optional", sequenceOrder: 7, executionMethod: "executable_via_api", status: "pending" },
       ] },
     },
   });

@@ -2,16 +2,18 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
+import { policyRecordClaimDecision } from "@/lib/authz/policies";
+import { requireUserWithPermission } from "@/lib/authz/guards";
+import { getTenantClaim } from "@/lib/authz/resource-access";
+import { PERMISSIONS } from "@/lib/authz/permissions";
 
 export async function recordDecision(claimId: string, formData: FormData) {
-  const user = await getCurrentUser();
-  if (!user) throw new Error("Not authenticated");
-
-  const makerCheckerRole = String(formData.get("makerCheckerRole"));
+  const makerCheckerRole = String(formData.get("makerCheckerRole")) as "maker" | "checker" | "adjudicator";
   const outcome = String(formData.get("outcome"));
   const rationale = String(formData.get("rationale") ?? "");
+
+  const { user } = await policyRecordClaimDecision({ claimId, makerCheckerRole, outcome });
 
   await prisma.decision.create({
     data: { claimId, decidedByUserId: user.id, makerCheckerRole, outcome, rationale },
@@ -30,8 +32,8 @@ export async function recordDecision(claimId: string, formData: FormData) {
 }
 
 export async function raiseDeficiency(claimId: string, formData: FormData) {
-  const user = await getCurrentUser();
-  if (!user) throw new Error("Not authenticated");
+  const user = await requireUserWithPermission(PERMISSIONS.CLAIM_REQUEST_DEFICIENCY);
+  await getTenantClaim(claimId, user.institutionId);
 
   const title = String(formData.get("title"));
   const description = String(formData.get("description"));
@@ -44,8 +46,9 @@ export async function raiseDeficiency(claimId: string, formData: FormData) {
 }
 
 export async function recordPayoutAndClose(claimId: string, formData: FormData) {
-  const user = await getCurrentUser();
-  if (!user) throw new Error("Not authenticated");
+  const user = await requireUserWithPermission(PERMISSIONS.PAYOUT_RECORD);
+  const claim = await getTenantClaim(claimId, user.institutionId);
+  if (claim.status !== "approved") throw new Error('A payout can only be recorded after the claim has been "approved".');
 
   const amountBand = String(formData.get("amountBand"));
 

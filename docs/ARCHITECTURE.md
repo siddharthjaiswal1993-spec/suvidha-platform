@@ -74,15 +74,54 @@ src/app/
   help/                 grievances
   consent/              consent centre, access history
   settings/             account/session settings
-  ops/                  institution & government console (separate shell, ops-role-gated)
+  ops/                  institution & government console (separate shell, ops-role-gated):
+                        requests/ (general Service Request queue — address/mobile/nominee/etc.,
+                        not just Legacy & Succession), death-events/, corrections/, claims/,
+                        grievances/, sla/, audit-log/
   api/                  route handlers for the connector-simulation layer only
 ```
+
+`src/config/capabilities.ts` is the capability registry referenced throughout the other docs — see
+`docs/ASSUMPTIONS_AND_LIMITATIONS.md` section 0.
 
 Server Components read directly via `prisma` (no internal REST hop needed for first-paint data).
 Mutations are Server Actions co-located with their feature (`actions.ts` files) — see
 `docs/API_CONTRACTS.md` for the full contract list. Route Handlers under `src/app/api/` exist only
 for the parts of the system that conceptually represent an external caller: connector simulation
 responses and any webhook-style endpoint (death-event intake, institution acknowledgement).
+
+## Authorization (`src/lib/authz/`)
+
+Every Server Action that mutates state calls into this module — never relies on the UI having
+already hidden the action. Four files, each with one job:
+
+- **`permissions.ts`** — the full permission catalogue and a fixed `ROLE_PERMISSIONS` map from
+  `User.primaryRole` to the permissions that role holds. A plain, reviewable TypeScript constant
+  rather than a database table, since the role set doesn't change at runtime in this prototype. A
+  user's role always comes from their authenticated persona — there is no UI anywhere that lets a
+  user pick or elevate their own role.
+- **`guards.ts`** — low-level, composable checks: `requireUserWithPermission()` (auth + permission),
+  `requireOwnsPerson()` (a citizen resource belongs to the acting person), `requireInstitutionTenancy()`
+  (an institution-side resource belongs to the acting officer's own institution), `assertValidRequestTransition()`
+  (a `ServiceRequest.normalizedStatus` state machine), and `requireDifferentMakerChecker()` — the one
+  check that can't be expressed as a static role→permission mapping, since it depends on a specific
+  case's actual decision history: it queries prior `Decision` rows for the case and throws if the
+  checker is the same user who made the maker recommendation.
+- **`resource-access.ts`** — "load and verify" helpers (`getOwnedServiceRequest`, `getTenantClaim`,
+  `getClaimIfClaimant`, etc.) that fetch a resource *and* assert access in one call, so a page or
+  action can never accidentally fetch a resource a different way and skip the check.
+- **`policies.ts`** — one composed function per specific product action (e.g.
+  `policyRecordServiceRequestDecision`, `policyResolveGrievance`), each combining the permission
+  check, the ownership/tenancy check, and (where relevant) the maker-checker separation check, so
+  that logic lives in exactly one place instead of being reassembled at every call site.
+
+Every dynamic detail page (`/requests/[id]`, `/institutions/[id]`, `/inbox/[id]`,
+`/legacy/claim/[claimId]`, `/ops/requests/[id]`, `/ops/claims/[caseId]`) independently re-verifies
+ownership/tenancy before rendering — a citizen changing the URL to another citizen's resource, or
+an officer opening another institution's case, gets a 404 (via `notFound()`), not a permission
+error that would confirm the resource exists. See `tests-e2e/golden-flow-i-negative-authorization.spec.ts`
+for the automated proof of this, and `docs/ACCESS_CONTROL_MATRIX.md` for the full role × capability
+matrix.
 
 ## Engines
 

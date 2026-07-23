@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,11 +9,12 @@ import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function InstitutionRelationshipDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const user = await getCurrentUser();
   const relationship = await prisma.institutionRelationship.findUnique({
     where: { id },
     include: { institution: true, connector: true, syncRuns: { orderBy: { startedAt: "desc" } }, serviceRequests: true, deadlines: true },
   });
-  if (!relationship) notFound();
+  if (!relationship || relationship.personId !== user?.personId) notFound();
 
   return (
     <div className="space-y-6">
@@ -52,11 +54,10 @@ export default async function InstitutionRelationshipDetailPage({ params }: { pa
         </Card>
       )}
 
-      <div className="flex gap-3">
-        <Button asChild><Link href="/requests">Start a request for this institution</Link></Button>
-        {!relationship.registeredNomineeSummary || relationship.registeredNomineeSummary === "No nominee on record" ? (
-          <Button asChild variant="outline"><Link href="/requests">Add a nominee</Link></Button>
-        ) : null}
+      <div className="flex flex-wrap gap-3">
+        <Button asChild><Link href={`/requests/new?institutionRelationshipId=${relationship.id}&serviceCategory=address_update`}>Update address</Link></Button>
+        <Button asChild variant="outline"><Link href={`/requests/new?institutionRelationshipId=${relationship.id}&serviceCategory=nominee_update`}>Add or update nominee</Link></Button>
+        <Button asChild variant="outline"><Link href="/help">Raise a grievance</Link></Button>
       </div>
     </div>
   );

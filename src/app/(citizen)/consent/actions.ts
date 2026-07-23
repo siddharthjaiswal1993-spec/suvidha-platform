@@ -9,6 +9,9 @@ export async function revokeConsent(consentRecordId: string) {
   const user = await getCurrentUser();
   if (!user) throw new Error("Not authenticated");
 
+  const consentRecord = await prisma.consentRecord.findUnique({ where: { id: consentRecordId } });
+  if (!consentRecord || consentRecord.personId !== user.personId) throw new Error("Consent record not found.");
+
   await prisma.consentRecord.update({ where: { id: consentRecordId }, data: { status: "revoked", revokedAt: new Date() } });
   await logAudit({ actorUserId: user.id, entityType: "ConsentRecord", entityId: consentRecordId, action: "consent.revoked" });
   revalidatePath("/consent");

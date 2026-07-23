@@ -15,6 +15,10 @@ import { logAudit } from "@/lib/audit";
 export async function submitReverification(deathEventId: string, personId: string) {
   const user = await getCurrentUser();
   if (!user) throw new Error("Not authenticated");
+  if (personId !== user.personId) throw new Error("You can only re-verify a status issue on your own record.");
+
+  const deathEvent = await prisma.deathEvent.findUnique({ where: { id: deathEventId } });
+  if (!deathEvent || deathEvent.personId !== user.personId) throw new Error("No correction record found");
 
   const correction = await prisma.deathEventCorrection.findFirst({ where: { deathEventId } });
   if (!correction) throw new Error("No correction record found");

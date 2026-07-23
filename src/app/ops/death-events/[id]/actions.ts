@@ -2,12 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
+import { requireUserWithPermission } from "@/lib/authz/guards";
+import { PERMISSIONS } from "@/lib/authz/permissions";
 
 export async function decideMatch(matchId: string, deathEventId: string, decision: "confirmed" | "rejected") {
-  const user = await getCurrentUser();
-  if (!user) throw new Error("Not authenticated");
+  const user = await requireUserWithPermission(PERMISSIONS.DEATH_EVENT_MATCH);
 
   await prisma.deathEventMatch.update({
     where: { id: matchId },
@@ -19,8 +19,7 @@ export async function decideMatch(matchId: string, deathEventId: string, decisio
 }
 
 export async function advanceDeathEventStatus(deathEventId: string, status: string) {
-  const user = await getCurrentUser();
-  if (!user) throw new Error("Not authenticated");
+  const user = await requireUserWithPermission(PERMISSIONS.DEATH_EVENT_VERIFY);
 
   await prisma.deathEvent.update({ where: { id: deathEventId }, data: { status } });
   await logAudit({ actorUserId: user.id, actorRole: user.primaryRole, entityType: "DeathEvent", entityId: deathEventId, action: `death_event.${status}` });

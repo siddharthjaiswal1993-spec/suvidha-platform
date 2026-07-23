@@ -5,12 +5,15 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { formatDate } from "@/lib/utils";
 import { AlertTriangle } from "lucide-react";
+import { getPreferredLocale } from "@/lib/locale";
+import { t } from "@/lib/i18n";
 
 export const metadata = { title: "My Profile" };
 
 export default async function ProfilePage() {
   const user = await getCurrentUser();
   const personId = user!.personId!;
+  const locale = await getPreferredLocale(personId);
 
   const [person, profile, identifiers, addresses, contactMethods] = await Promise.all([
     prisma.person.findUnique({ where: { id: personId } }),
@@ -27,28 +30,25 @@ export default async function ProfilePage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold">{person?.fullName}</h1>
-        <p className="mt-1 text-muted-foreground">
-          Your master profile — not itself an official record, but the one place that shows how
-          your identity looks across every connected source.
-        </p>
+        <p className="mt-1 text-muted-foreground">{t("profile_subtitle", locale)}</p>
       </div>
 
       <Tabs defaultValue="consistency">
         <TabsList>
-          <TabsTrigger value="consistency">Profile consistency</TabsTrigger>
-          <TabsTrigger value="records">Identity records</TabsTrigger>
+          <TabsTrigger value="consistency">{t("profile_consistency_tab", locale)}</TabsTrigger>
+          <TabsTrigger value="records">{t("profile_records_tab", locale)}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="consistency">
           {!profile || profile.conflicts.length === 0 ? (
-            <Card><CardContent className="pt-6 text-sm text-muted-foreground">No discrepancies detected across your connected sources.</CardContent></Card>
+            <Card><CardContent className="pt-6 text-sm text-muted-foreground">{t("profile_no_discrepancies", locale)}</CardContent></Card>
           ) : (
             <div className="space-y-4">
               {profile.conflicts.map((c) => (
                 <Card key={c.id}>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-base">
-                      <AlertTriangle className="h-4 w-4 text-warning" /> {c.profileField.label} differs across sources
+                      <AlertTriangle className="h-4 w-4 text-warning" /> {c.profileField.label} {t("profile_differs_across_sources", locale)}
                     </CardTitle>
                     <CardDescription>
                       Suvidha doesn&apos;t decide which value is &quot;correct&quot; for every

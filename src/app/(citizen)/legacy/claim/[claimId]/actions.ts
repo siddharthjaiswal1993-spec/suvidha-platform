@@ -2,14 +2,19 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
+import { requireUserWithPermission } from "@/lib/authz/guards";
+import { getClaimIfClaimant } from "@/lib/authz/resource-access";
+import { PERMISSIONS } from "@/lib/authz/permissions";
 
 export async function respondToDeficiency(deficiencyId: string, claimId: string, formData: FormData) {
-  const user = await getCurrentUser();
-  if (!user) throw new Error("Not authenticated");
+  const user = await requireUserWithPermission(PERMISSIONS.CLAIM_READ_AUTHORISED);
+  await getClaimIfClaimant(claimId, user.personId);
 
   const note = String(formData.get("note") ?? "");
+
+  const deficiency = await prisma.deficiencyRequest.findUnique({ where: { id: deficiencyId } });
+  if (!deficiency || deficiency.claimId !== claimId) throw new Error("Deficiency not found for this claim.");
 
   await prisma.deficiencyRequest.update({
     where: { id: deficiencyId },

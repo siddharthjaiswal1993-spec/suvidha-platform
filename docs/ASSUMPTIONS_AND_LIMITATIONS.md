@@ -5,6 +5,59 @@ was scoped that way, and what would need to change for any part of it to become 
 system. Where a claim elsewhere in this documentation could be misread as "this works today
 against real institutions," this document is the correction.
 
+**The authoritative, structured version of this document is `src/config/capabilities.ts`** — a
+per-capability registry (citizen-flow status, institution-flow status, integration status, test
+coverage, and a one-line limitation) that every other doc, including this one, should trace back
+to rather than restate independently. If this document and the registry ever disagree, the
+registry is correct and this document is stale.
+
+## 0. What changed in the v2 pass (orchestration-depth review)
+
+An initial build demonstrated breadth (nine domains, dozens of screens) with several domains as
+read-only dashboards rather than complete workflows, and an institution console that was
+effectively a death-claims console with a few extra pages. A follow-up review corrected the
+imbalance:
+
+- **Server-enforced authorization** (`src/lib/authz/`) replaced ad-hoc per-action checks: every
+  Server Action now independently re-verifies role permission, resource ownership, institution
+  tenancy, and state-machine legality — not just what the UI happens to hide. Maker and checker are
+  enforced as different users at the database-decision level, not just by convention.
+- **The general Service Request workflow now has a real institution side**
+  (`/ops/requests`, `/ops/requests/[id]`) — previously, `ServiceRequest` (the citizen-facing
+  address/mobile/nominee/etc. request object) had no institution review screen at all; only the
+  Legacy & Succession `Claim` model did. `CaseAssignment`, `Decision`, and `DeficiencyRequest` are
+  now shared across both `Claim` and `ServiceRequest` rather than being Claim-only.
+- **The address-change life event is now genuinely wired end to end**, not a set of checkboxes:
+  starting an action creates a real `ServiceRequest` with the correct execution method and the
+  correct institution's `ServiceDefinition` (a real bug — every action was previously attributed to
+  whichever institution's service definition happened to be seeded first — was found and fixed
+  while building this). Completion reconciles the change back into `ProfileFieldValue` and
+  `InstitutionRelationship.registeredAddressSnapshot`, and resolves the matching `ProfileConflict`.
+- **Mobile navigation** was added for both the citizen and ops shells via a focus-trapped,
+  Escape-to-close drawer (`src/components/domain/mobile-nav-drawer.tsx`, built on Radix Dialog).
+  Building this surfaced a genuine React Server Components bug worth naming: an earlier version
+  passed a render-prop function as `children` from a Server Component layout into the client-side
+  drawer, which is not serializable across the server/client boundary and crashed every citizen and
+  ops page. It's fixed via a `useMobileNavClose()` context hook instead of a function prop — a good
+  example of an RSC constraint that's easy to violate without an explicit runtime error until you
+  actually render the page.
+- **Grievance resolution now requires a category, a note, and a citizen-notification
+  acknowledgement** — it was previously a single-click status flip.
+- **An explicit IDOR-hardening pass** re-audited every dynamic `[id]` page and every Server Action
+  accepting a resource ID, specifically re-testing the claim from Section 4 of the review brief that
+  "a citizen cannot read another citizen's request by changing a URL." This found and fixed several
+  genuine gaps beyond the ones already covered by `src/lib/authz/resource-access.ts`: `/life-events/[id]`
+  had no ownership check at all; `revokeConsent` and `revokeTrustedContact` (citizen Server Actions)
+  let any authenticated user revoke *any* citizen's consent record or trusted contact by ID, not just
+  their own; `submitReverification` didn't verify the acting citizen owned the death event being
+  corrected; and the `/ops/death-events/[id]` Server Actions (`decideMatch`,
+  `advanceDeathEventStatus`) had no role/permission check at all — any authenticated session, citizen
+  or officer, could call them directly. All are now covered by an ownership check or
+  `requireUserWithPermission`. Separately, the `maker` role was found to be missing
+  `SERVICE_REQUEST_REVIEW` — makers could recommend a decision but not accept a request into review
+  in the first place — a real permission-model gap only surfaced once an e2e test exercised the
+  Ashoka Bank maker/checker path on a request that hadn't been pre-seeded already "in review."
+
 ## 1. Scope reductions from the full spec to the actual MVP build
 
 The full nine-domain, thirteen-persona, eight-golden-flow specification is broad by design — it
@@ -81,10 +134,12 @@ designed for and documented, but intentionally not implemented in this prototype
   model's `Asset.category` and `InstitutionRelationship.relationshipType` enums as concepts the
   schema can represent, but are not populated with seeded institutions or dedicated flows in this
   build.
-- **Hindi localization covers key surfaces, not every string.** `CitizenProfile.preferredLanguage`
-  supports `en`/`hi`, and the i18n architecture (see `docs/ACCESSIBILITY.md`) is designed to
-  localise the golden-flow screens a citizen actually uses. It does not claim complete Hindi
-  coverage of every administrative or institution-console string in the prototype.
+- **Hindi localization is deprioritised, not a current product focus.** `CitizenProfile.preferredLanguage`
+  supports `en`/`hi`, the dictionary-based i18n architecture (see `docs/ACCESSIBILITY.md`) works and
+  covers primary navigation plus a handful of key screens, and the language switcher in Settings is
+  functional — but English is the primary, default, and actively maintained experience going
+  forward, per explicit product direction. Treat any Hindi string as a bonus, not a coverage
+  commitment.
 - **The AI assistant is a planned, templated simulation, not a live LLM integration, in this
   prototype.** As of this writing, there is no AI/LLM integration code anywhere in this
   codebase — no `src/lib/ai*` module, no model API client, no prompt templates exist yet. Wherever

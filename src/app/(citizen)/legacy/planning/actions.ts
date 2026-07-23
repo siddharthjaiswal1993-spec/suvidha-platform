@@ -9,6 +9,9 @@ export async function revokeTrustedContact(trustedContactId: string) {
   const user = await getCurrentUser();
   if (!user) throw new Error("Not authenticated");
 
+  const trustedContact = await prisma.trustedContact.findUnique({ where: { id: trustedContactId } });
+  if (!trustedContact || trustedContact.grantorPersonId !== user.personId) throw new Error("Trusted contact not found.");
+
   await prisma.trustedContact.update({ where: { id: trustedContactId }, data: { status: "revoked", revokedAt: new Date() } });
   await prisma.accessGrant.updateMany({ where: { trustedContactId }, data: { status: "revoked", revokedAt: new Date() } });
 

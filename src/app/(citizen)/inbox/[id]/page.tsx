@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,11 +9,12 @@ import { formatDate, formatDateTime } from "@/lib/utils";
 
 export default async function InboxThreadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const user = await getCurrentUser();
   const thread = await prisma.inboxThread.findUnique({
     where: { id },
     include: { messages: { include: { notice: true }, orderBy: { createdAt: "asc" } }, institution: true },
   });
-  if (!thread) notFound();
+  if (!thread || thread.personId !== user?.personId) notFound();
 
   return (
     <div className="space-y-6">

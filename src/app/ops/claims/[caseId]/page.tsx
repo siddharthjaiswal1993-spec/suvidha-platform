@@ -31,7 +31,7 @@ export default async function ClaimCaseWorkspacePage({ params }: { params: Promi
       payments: true,
     },
   });
-  if (!claim) notFound();
+  if (!claim || (user?.institutionId && claim.institutionId !== user.institutionId)) notFound();
 
   const asset = claim.claimAssets[0]?.asset;
   const facts: AuthorityFacts = {

@@ -1,6 +1,9 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth";
+import { AuthzError } from "@/lib/authz/guards";
+import { getClaimIfClaimant } from "@/lib/authz/resource-access";
 import { respondToDeficiency } from "./actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +14,15 @@ import { CheckCircle2, Circle, Clock } from "lucide-react";
 
 export default async function ClaimDetailPage({ params }: { params: Promise<{ claimId: string }> }) {
   const { claimId } = await params;
+  const user = await getCurrentUser();
+
+  try {
+    await getClaimIfClaimant(claimId, user?.personId);
+  } catch (e) {
+    if (e instanceof AuthzError) notFound();
+    throw e;
+  }
+
   const claim = await prisma.claim.findUnique({
     where: { id: claimId },
     include: {

@@ -26,12 +26,15 @@ test.describe("Golden Flow A — Estate Planner onboarding & planning", () => {
     await page.getByRole("link", { name: "Open estate planning" }).click();
     await expect(page).toHaveURL(/\/legacy\/planning$/);
     await expect(page.getByText(/% ready/)).toBeVisible();
-    await page.waitForLoadState("networkidle");
 
     const trustedTab = page.getByRole("tab", { name: "Trusted Contacts" });
     await expect(trustedTab).toBeVisible();
-    await trustedTab.click();
-    await expect(trustedTab).toHaveAttribute("aria-selected", "true");
+    // Retry the click: in local dev with HMR blocked (see next.config.ts's allowedDevOrigins
+    // comment) the very first click can land before hydration finishes and silently no-op.
+    await expect(async () => {
+      await trustedTab.click();
+      await expect(trustedTab).toHaveAttribute("aria-selected", "true", { timeout: 1000 });
+    }).toPass({ timeout: 15_000 });
 
     const revokeButton = page.getByRole("button", { name: "Revoke access" }).first();
     await expect(revokeButton).toBeVisible();

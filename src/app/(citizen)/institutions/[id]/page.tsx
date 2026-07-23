@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { confirmInstitutionVerification } from "../actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,13 +17,18 @@ export default async function InstitutionRelationshipDetailPage({ params }: { pa
   });
   if (!relationship || relationship.personId !== user?.personId) notFound();
 
+  async function confirmVerification() {
+    "use server";
+    await confirmInstitutionVerification(id);
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <p className="text-sm text-muted-foreground"><Link href="/institutions" className="underline">My Institutions</Link> / {relationship.institution.name}</p>
         <h1 className="mt-1 text-2xl font-semibold">{relationship.label}</h1>
         <div className="mt-2 flex flex-wrap gap-2">
-          <Badge variant={relationship.status === "active" ? "success" : "outline"}>{relationship.status}</Badge>
+          <Badge variant={relationship.status === "active" ? "success" : "outline"}>{relationship.status.replaceAll("_", " ")}</Badge>
           <Badge variant="outline">{relationship.verificationStatus.replaceAll("_", " ")}</Badge>
           {relationship.connector && <Badge variant="secondary">{relationship.connector.integrationLabel.replaceAll("_", " ")}</Badge>}
         </div>
@@ -54,11 +60,20 @@ export default async function InstitutionRelationshipDetailPage({ params }: { pa
         </Card>
       )}
 
-      <div className="flex flex-wrap gap-3">
-        <Button asChild><Link href={`/requests/new?institutionRelationshipId=${relationship.id}&serviceCategory=address_update`}>Update address</Link></Button>
-        <Button asChild variant="outline"><Link href={`/requests/new?institutionRelationshipId=${relationship.id}&serviceCategory=nominee_update`}>Add or update nominee</Link></Button>
-        <Button asChild variant="outline"><Link href="/help">Raise a grievance</Link></Button>
-      </div>
+      {relationship.status === "under_verification" ? (
+        <Card className="border-warning/40">
+          <CardContent className="flex items-center justify-between pt-6 text-sm">
+            <p>Verification is simulated in this prototype — confirm to activate this relationship.</p>
+            <form action={confirmVerification}><Button type="submit" size="sm">Confirm verification</Button></form>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="flex flex-wrap gap-3">
+          <Button asChild><Link href={`/requests/new?institutionRelationshipId=${relationship.id}&serviceCategory=address_update`}>Update address</Link></Button>
+          <Button asChild variant="outline"><Link href={`/requests/new?institutionRelationshipId=${relationship.id}&serviceCategory=nominee_update`}>Add or update nominee</Link></Button>
+          <Button asChild variant="outline"><Link href="/help">Raise a grievance</Link></Button>
+        </div>
+      )}
     </div>
   );
 }

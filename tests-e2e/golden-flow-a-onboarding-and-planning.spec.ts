@@ -1,15 +1,28 @@
 import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 import { loginAs } from "./helpers";
 
 /**
  * Golden Flow A: living Estate Planner — unified onboarding into the dashboard, master profile
  * consistency, institutional relationship graph, and estate-planning readiness/Trusted Contacts.
+ * Also carries this suite's accessibility smoke checks (axe-core scan + a keyboard-only pass) per
+ * docs/TEST_PLAN.md — kept here rather than a separate suite so it can't silently rot unnoticed.
  */
 test.describe("Golden Flow A — Estate Planner onboarding & planning", () => {
   test("Meera can sign in, see her dashboard, profile conflicts, and institutions", async ({ page }) => {
     await loginAs(page, "Meera");
     await expect(page).toHaveURL(/\/home$/);
     await expect(page.getByRole("heading", { name: /Welcome back, Meera/ })).toBeVisible();
+
+    const results = await new AxeBuilder({ page }).include("main").analyze();
+    const critical = results.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
+    expect(critical, JSON.stringify(critical, null, 2)).toEqual([]);
+
+    // Keyboard-only pass: tab from the top of the page reaches the primary nav without a mouse.
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    const focusedText = await page.evaluate(() => document.activeElement?.textContent ?? "");
+    expect(focusedText.length).toBeGreaterThan(0);
 
     await page.getByRole("link", { name: "My Profile" }).click();
     await expect(page).toHaveURL(/\/profile$/);

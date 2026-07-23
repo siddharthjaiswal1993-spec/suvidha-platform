@@ -3,6 +3,30 @@ import { prisma } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 
 /**
+ * Maps a ServiceDefinition.serviceCategory to the CitizenProfile field it changes, and the
+ * "New X: " prefix used in ServiceRequest.requestedValueSummary so the raw citizen-entered value
+ * can be extracted at completion time. Shared between the life-event actions (category derived
+ * from the life-event template) and the general ops/requests completion action (category derived
+ * from the request's own ServiceDefinition), so both paths reconcile identically instead of one
+ * hardcoding "present_address" regardless of what was actually requested.
+ */
+export const SERVICE_CATEGORY_FIELD_MAP: Record<string, { fieldKey: "present_address" | "mobile_primary" | "legal_name"; prefix: string }> = {
+  address_update: { fieldKey: "present_address", prefix: "New address:" },
+  mobile_update: { fieldKey: "mobile_primary", prefix: "New mobile number:" },
+  name_correction: { fieldKey: "legal_name", prefix: "New legal name:" },
+};
+
+export function parseRequestedValue(serviceCategory: string, requestedValueSummary: string | null): { fieldKey: "present_address" | "mobile_primary" | "legal_name"; newValue: string } | null {
+  const mapping = SERVICE_CATEGORY_FIELD_MAP[serviceCategory];
+  if (!mapping || !requestedValueSummary) return null;
+  const prefixPattern = new RegExp(`^${mapping.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i");
+  if (!prefixPattern.test(requestedValueSummary)) return null;
+  const newValue = requestedValueSummary.replace(prefixPattern, "").trim();
+  if (!newValue) return null;
+  return { fieldKey: mapping.fieldKey, newValue };
+}
+
+/**
  * Runs once a ServiceRequest that changes a profile field (currently: present_address) reaches a
  * genuinely completed state — either institution-confirmed or citizen-self-reported. This is what
  * makes the platform feel like "one connected product" rather than a form that vanishes into a

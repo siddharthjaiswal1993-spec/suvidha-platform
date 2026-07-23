@@ -4,6 +4,7 @@ import { createServiceRequest } from "../actions";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ShieldCheck } from "lucide-react";
@@ -13,9 +14,9 @@ export const metadata = { title: "New request" };
 export default async function NewRequestPage({
   searchParams,
 }: {
-  searchParams: Promise<{ institutionRelationshipId?: string; serviceCategory?: string }>;
+  searchParams: Promise<{ institutionRelationshipId?: string; serviceCategory?: string; requestedChange?: string }>;
 }) {
-  const { institutionRelationshipId: prefillRelationshipId, serviceCategory: prefillCategory } = await searchParams;
+  const { institutionRelationshipId: prefillRelationshipId, serviceCategory: prefillCategory, requestedChange: prefillRequestedChange } = await searchParams;
   const user = await getCurrentUser();
   const [services, relationships, documents] = await Promise.all([
     prisma.serviceDefinition.findMany({ include: { serviceCatalogue: { include: { institution: true } } } }),
@@ -23,7 +24,12 @@ export default async function NewRequestPage({
     prisma.legalDocument.findMany({ where: { ownerPersonId: user!.personId!, deletedAt: null }, include: { documentProfile: true } }),
   ]);
 
-  const preselectedService = prefillCategory ? services.find((s) => s.serviceCategory === prefillCategory) : undefined;
+  const prefillInstitutionId = prefillRelationshipId ? relationships.find((r) => r.id === prefillRelationshipId)?.institutionId : undefined;
+  const preselectedService = prefillCategory
+    ? (prefillInstitutionId
+        ? services.find((s) => s.serviceCategory === prefillCategory && s.serviceCatalogue.institutionId === prefillInstitutionId)
+        : undefined) ?? services.find((s) => s.serviceCategory === prefillCategory)
+    : undefined;
 
   return (
     <div className="max-w-xl space-y-6">
@@ -67,7 +73,21 @@ export default async function NewRequestPage({
 
         <Card className="mt-4">
           <CardHeader>
-            <CardTitle className="text-base">2. Evidence</CardTitle>
+            <CardTitle className="text-base">2. Requested change</CardTitle>
+            <CardDescription>Describe the specific change in your own words — Suvidha applies the right format for the institution.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              name="requestedChange"
+              placeholder="e.g. '12 MG Road, Pune, MH 411001', '+91 98xxxxxxx10', or 'Add my daughter as 50% nominee'"
+              defaultValue={prefillRequestedChange}
+            />
+          </CardContent>
+        </Card>
+
+        <Card className="mt-4">
+          <CardHeader>
+            <CardTitle className="text-base">3. Evidence</CardTitle>
             <CardDescription>Reuse a verified document instead of submitting it again.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -90,7 +110,7 @@ export default async function NewRequestPage({
 
         <Card className="mt-4 border-primary/30">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4 text-primary" /> 3. Consent</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4 text-primary" /> 4. Consent</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p>By continuing, you consent to sharing the selected document and request details with the chosen institution, for the sole purpose of processing this request.</p>

@@ -11,6 +11,66 @@ coverage, and a one-line limitation) that every other doc, including this one, s
 to rather than restate independently. If this document and the registry ever disagree, the
 registry is correct and this document is stale.
 
+## -1. What changed in the v3 pass (capability completion)
+
+A follow-up review found that most of the 12 tracked capabilities in `src/config/capabilities.ts`
+were still `interface_prototype` — a real screen rendering real seeded data, but no working action
+behind it. This pass closed that gap for every capability that could honestly be closed without
+fabricating a real integration:
+
+- **Document hub**: upload (`uploadDocument`), a detail page (`/documents/[id]`) with verification
+  history and reuse history, sharing with revocation (`DocumentShare`), and deletion are all real
+  writes now, not just a read-only card grid.
+- **Inbox**: reply (`replyToThread`, a real citizen-authored `Message` row), escalate a thread
+  straight into a tracked `Grievance` (`Grievance.sourceInboxThreadId` traces it back), and report a
+  message as suspicious (`Message.reportedSuspiciousAt`) are all wired. A phishing-style seeded
+  message (`senderVerified: false`, `fraudWarning: true`) exists so the fraud-warning UI treatment
+  has something to demonstrate against — it previously had zero seeded cases.
+- **Delegated access**: a citizen can invite a new assistant, always scoped to one of their own open
+  requests (never blanket access, matching `DelegatedTask`'s own design) rather than only being able
+  to approve/reject pre-seeded invitations.
+- **Institutional relationships**: a citizen can connect a new institution themselves, modelled as a
+  genuine two-step process (`under_verification` → citizen-confirmed `active`) instead of an instant
+  unexplained "verified" badge — see `docs/INTEGRATIONS.md` for why this stays simulated.
+- **Grievances**: a `/help/[id]` detail page now supports escalation (to a simulated Nodal Officer)
+  and appeal (against a resolved grievance), where previously the citizen side was create-and-track
+  only.
+- **Master profile**: a "Check for updates" action re-confirms verified field values'
+  `lastVerifiedAt` timestamps (deliberately *not* fabricating a new discrepancy, since there's no
+  live connector to actually detect one), plus a new "Field history" tab shows every historical
+  value per field, not just the current one and open conflicts.
+- **Service request engine, generalized**: `completeServiceRequestAndReconcile` previously hardcoded
+  `fieldKey: "present_address"` regardless of what service was actually being completed — a latent
+  bug that only mattered once a non-address request (e.g. a nominee update) reached completion.
+  `src/lib/reconciliation.ts`'s new `SERVICE_CATEGORY_FIELD_MAP` maps `serviceCategory` →
+  profile-field key generically, shared between the life-event flow and the general engine, and a
+  "requested change" step was added to `/requests/new` so a citizen's actual entered value (not just
+  a seeded one) flows through to reconciliation. Proven end to end for a *mobile-number* change, not
+  just address, by `tests-e2e/golden-flow-j-capability-completion.spec.ts`.
+- **A second, pre-existing institution-attribution bug was found and fixed**: a nominee-update
+  request against a Konkan Cooperative Bank fixed deposit was wired to Ashoka National Bank's
+  nominee-update `ServiceDefinition` (the only one that existed) — the same class of bug fixed for
+  address-change in v2, now fixed the same way (one `ServiceDefinition` per participating
+  institution) and generalized in `/requests/new`'s deep-link preselection logic, which previously
+  matched a service by category alone and could silently preselect the wrong institution's service.
+- **A real documentation-vs-reality gap was found and closed**: `docs/TEST_PLAN.md` claimed an
+  axe-core accessibility scan and a keyboard-only pass existed on every golden e2e flow. Neither
+  existed anywhere in the repository. A real axe-core scan and keyboard-tab-order check were added
+  to `golden-flow-a`, and the document's wording was corrected to say plainly that only one flow
+  carries it, rather than re-describing the aspiration as fact.
+- **`EmptyState` was documented in `docs/DESIGN_SYSTEM.md` as a component but never implemented** —
+  also found and fixed; it's now a real component (`src/components/domain/empty-state.tsx`) used on
+  the Documents and Family & Delegated Access pages.
+- **A GitHub Actions CI workflow** (`.github/workflows/ci.yml`) now runs typecheck, lint, unit
+  tests, e2e tests, and the production build on every push and pull request — previously nothing
+  ran automatically.
+- **Not extended this pass, and documented as such rather than left ambiguous**: maker-checker
+  separation of duties was not extended to grievance resolution or death-event match decisions
+  (still `ServiceRequest` and `Claim` only); the address-change life event's "new address" value is
+  still fixed at seed time (the general request engine's citizen-entered value applies to requests
+  created via `/requests/new`, not yet the life-event flow itself); legal-name (PAN) correction uses
+  the identical reconciliation mechanism proven for mobile number but isn't separately e2e-covered.
+
 ## 0. What changed in the v2 pass (orchestration-depth review)
 
 An initial build demonstrated breadth (nine domains, dozens of screens) with several domains as

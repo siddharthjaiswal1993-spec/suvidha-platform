@@ -1,5 +1,11 @@
 # Delegated Access & Representation
 
+**Implementation status** (authoritative record: `src/config/capabilities.ts` → `delegated_access`):
+a citizen can invite a new assistant from `/family-access`, always scoped to one of their own open
+`ServiceRequest`s — never blanket account access — which is created already approved, since the
+citizen initiated it themselves. No real invitation email is sent, and the invitee has no login of
+their own in this demo's persona set.
+
 **Domain H of the lifelong citizen administration platform.** Source models:
 `ProfessionalRepresentative`, `DelegatedTask`, plus `ConsentPurpose`, `ConsentScope`,
 and `DataShare` for the underlying consent/audit trail. See `docs/TERMINOLOGY.md` §4

@@ -13,6 +13,10 @@ const QUESTIONS = [
   { key: "nominee_coverage", label: "Have I updated my nominee everywhere?" },
   { key: "stalled_requests", label: "Which of my requests haven't moved recently?" },
   { key: "address_mismatch", label: "Where is my old address still registered?" },
+  { key: "open_grievances", label: "Do I have any open grievances?" },
+  { key: "document_shares", label: "What documents have I shared, and with whom?" },
+  { key: "delegated_access", label: "Who has delegated access to my tasks?" },
+  { key: "estate_readiness", label: "What's my estate readiness score?" },
 ];
 
 async function answerQuestion(key: string | undefined, personId: string) {
@@ -46,6 +50,32 @@ async function answerQuestion(key: string | undefined, personId: string) {
     });
     if (conflicts.length === 0) return { text: "No address mismatches detected across your connected sources.", cites: ["My Profile"] };
     return { text: conflicts.map((c) => `${c.alternateValue.sourceLabel} still shows: "${c.alternateValue.value}"`).join("; "), cites: ["My Profile"] };
+  }
+  if (key === "open_grievances") {
+    const grievances = await prisma.grievance.findMany({ where: { raisedByPersonId: personId, status: { notIn: ["resolved"] } } });
+    if (grievances.length === 0) return { text: "You have no open grievances right now.", cites: ["Help & Grievances"] };
+    return { text: `${grievances.length} open grievance(s): ${grievances.map((g) => `"${g.subject}" (${g.status.replaceAll("_", " ")})`).join("; ")}.`, cites: ["Help & Grievances"] };
+  }
+  if (key === "document_shares") {
+    const shares = await prisma.documentShare.findMany({
+      where: { documentProfile: { legalDocument: { ownerPersonId: personId } }, revokedAt: null },
+      include: { documentProfile: { include: { legalDocument: true } } },
+    });
+    if (shares.length === 0) return { text: "You haven't shared any documents yet.", cites: ["Documents"] };
+    return { text: shares.map((s) => `"${s.documentProfile.legalDocument.fileLabel}" is shared with ${s.sharedWithLabel} (${s.purpose})`).join("; "), cites: ["Documents"] };
+  }
+  if (key === "delegated_access") {
+    const tasks = await prisma.delegatedTask.findMany({
+      where: { serviceRequest: { personId }, status: { in: ["approved", "pending_owner_approval"] } },
+      include: { assistantPerson: true, serviceRequest: true },
+    });
+    if (tasks.length === 0) return { text: "No one currently has delegated access to any of your tasks.", cites: ["Family & Delegated Access"] };
+    return { text: tasks.map((t) => `${t.assistantPerson.fullName} — ${t.permissionTier.replaceAll("_", " ")} on "${t.serviceRequest?.title}" (${t.status.replaceAll("_", " ")})`).join("; "), cites: ["Family & Delegated Access"] };
+  }
+  if (key === "estate_readiness") {
+    const estatePlan = await prisma.estatePlan.findUnique({ where: { personId } });
+    if (!estatePlan) return { text: "You haven't started estate planning yet — visit Legacy & Succession to begin.", cites: ["Legacy & Succession"] };
+    return { text: `Your estate readiness score is ${estatePlan.readinessScore}%. Check Legacy & Succession for exactly which nominations or documents are still missing.`, cites: ["Legacy & Succession"] };
   }
   return null;
 }

@@ -3,10 +3,18 @@
 ## Status note
 
 This document now describes the test suite as actually implemented, not a target contract for
-future work — 37 Vitest unit tests across `src/lib/engines/` and `src/lib/authz/`, and 15 Playwright
-tests across 8 spec files under `tests-e2e/`. Run `npm test` and `npm run test:e2e` to reproduce the numbers below;
+future work — 37 Vitest unit tests across `src/lib/engines/` and `src/lib/authz/`, and 22 Playwright
+tests across 9 spec files under `tests-e2e/`. Run `npm test` and `npm run test:e2e` to reproduce the numbers below;
 `src/config/capabilities.ts` records per-capability test status if this document and reality ever
-drift apart.
+drift apart. A GitHub Actions workflow (`.github/workflows/ci.yml`) runs all of the above plus the
+production build on every push and pull request against `main`.
+
+**A note on how this document was corrected once already**: an earlier version of this section
+claimed axe-core accessibility scans and keyboard-only passes existed on all five/eight golden
+flows. They didn't — a later review caught the gap between the claim and the code. Rather than
+repeat that mistake, the "Accessibility smoke checks" section below states plainly which flow
+actually carries the scan and which don't, instead of describing an aspirational target as if it
+were already true everywhere.
 
 ## Test strategy overview
 
@@ -82,7 +90,7 @@ instance — used to verify the live demo after each deploy):
 
 | # | Spec file | Golden flow | Why it's e2e-covered |
 |---|---|---|---|
-| 1 | `golden-flow-a-onboarding-and-planning.spec.ts` | Estate Planner onboarding, profile discrepancies, institutions, estate readiness, Trusted Contact revocation | The activation path every other citizen flow depends on. |
+| 1 | `golden-flow-a-onboarding-and-planning.spec.ts` | Estate Planner onboarding, profile discrepancies, institutions, estate readiness, Trusted Contact revocation | The activation path every other citizen flow depends on. Also carries the suite's accessibility smoke check (see below). |
 | 2 | `golden-flow-b-life-event.spec.ts` | Address-change life event: direct-API completion and manual self-report with reference number/date | Two of the four execution-method paths a citizen can take. |
 | 3 | `golden-flow-c-family-assisted-access.spec.ts` | Owner approves a Family Administrator's delegated task | The prepare/approve permission boundary — exactly the kind of bug a unit test alone would miss. |
 | 4 | `golden-flow-d-claimant-and-ops.spec.ts` | Claimant tracks a claim; Claims Officer reviews it and records a decision | Covers both the citizen and institution-officer surfaces for Legacy & Succession claims. |
@@ -90,11 +98,12 @@ instance — used to verify the live demo after each deploy):
 | 6 | `golden-flow-f-no-will-claimant.spec.ts` | Uninvited claimant, intestate succession, open deficiency | The harder claimant path — no prior Trusted Contact relationship. |
 | 7 | `golden-flow-g-address-change-institution-loop.spec.ts` | **The primary end-to-end outcome**: citizen deficiency response → maker recommendation → a *different* checker's approval → institution completion → profile reconciliation; plus the negative case of a maker attempting to also act as checker on their own case | Proves the whole cross-domain thesis — a life event resolved through real institution review, closing the loop back into the citizen's own profile — actually works, not just that each screen renders. |
 | 8 | `golden-flow-i-negative-authorization.spec.ts` | Cross-citizen, cross-institution, and role-based access attempts, all rejected server-side | Proves `src/lib/authz/` is load-bearing, not just documented — see `docs/ACCESS_CONTROL_MATRIX.md`. |
+| 9 | `golden-flow-j-capability-completion.spec.ts` | Document upload/sharing, inbox reply/escalate/report-suspicious, delegated-access invitation, connecting a new institution, a *non-address* request (mobile number) reconciling correctly, grievance escalation, and the Life Admin Assistant's expanded question set | Proves the capabilities that were previously `interface_prototype` (real screen, no real action behind it) in `src/config/capabilities.ts` actually write state now, not just render — the same category of gap the IDOR/authorization audit found in v2, applied to feature-completeness instead of security. |
 
 **Manually verified, not under full e2e** (see `src/config/capabilities.ts` for the authoritative
-list): the document hub's document-detail/sharing screens, the inbox's reply/escalate actions
-beyond read-and-explain, the financial administration overview, and the Life Admin Assistant's
-non-golden-flow suggested questions. These are lower-frequency or lower-risk relative to the
+list): the financial administration overview's read-only views, and PAN name-correction
+specifically (it shares the exact reconciliation code path proven by flow #9's mobile-number test,
+but isn't separately exercised). These are lower-frequency or lower-risk relative to the
 authorization and cross-domain-orchestration paths that get full e2e investment, consistent with
 this being a time-boxed prototype rather than a production QA program.
 
@@ -127,21 +136,19 @@ coverage:
 
 ### Accessibility smoke checks
 
-Each of the five fully e2e-covered golden flows includes, as part of its Playwright spec (not a
-separate suite that can silently rot):
-
-- An automated accessibility scan (e.g. axe-core integration) at each major step, asserting zero
-  critical/serious violations.
-- A keyboard-only pass through the flow's primary path (tab order reaches every interactive
-  element; the flow can be completed without a mouse).
-- A check that every icon-only control encountered has an accessible name (`docs/ACCESSIBILITY.md`).
-- A check that the execution-method badge is present and has the expected accessible text wherever
-  a request/action is rendered.
+**Honest status, corrected after an earlier version of this document overclaimed it**: only
+`golden-flow-a-onboarding-and-planning.spec.ts` currently carries an automated check — an
+`@axe-core/playwright` scan on the `/home` dashboard asserting zero critical/serious violations,
+plus a keyboard-tab-order check confirming focus lands on a real interactive element without a
+mouse. The other eight spec files do not. A check that every icon-only control has an accessible
+name, and that execution-method badges carry accessible text, is not automated anywhere — both are
+still manual-review items against `docs/ACCESSIBILITY.md` and `docs/DESIGN_SYSTEM.md`. Extending
+the axe-core scan to the remaining flows is listed as a recommended next step, not claimed as done.
 
 ## 3. Gates before considering a change complete
 
-No change is considered complete until all of the following pass locally (and in CI, once CI is
-configured):
+No change is considered complete until all of the following pass locally and in CI
+(`.github/workflows/ci.yml`, which runs on every push and pull request against `main`):
 
 1. **Lint** — `npm run lint` (ESLint via `eslint.config.mjs` / `eslint-config-next`), zero errors.
 2. **Typecheck** — `npm run typecheck` (`tsc --noEmit`), zero errors — particularly important given
@@ -153,11 +160,12 @@ configured):
    optional.
 4. **Build** — `npm run build`, completing without error (catches Server Component/Server Action
    boundary mistakes, and any Prisma-adapter driver misconfiguration, that typecheck alone can miss).
-5. **E2E** — `npm run test:e2e`, all five golden-flow specs passing, before a change touching any of
-   those flows' underlying models or Server Actions is merged.
-6. **Manual smoke pass** — for changes touching flows #6–#8 (manual-verification-only flows) or any
-   ops-console screen, a documented manual walkthrough against the relevant golden-flow checklist,
-   recorded in the PR description, substitutes for automated e2e coverage.
+5. **E2E** — `npm run test:e2e`, all nine spec files passing, before a change touching any of those
+   flows' underlying models or Server Actions is merged.
+6. **Manual smoke pass** — for changes touching the financial administration overview or PAN
+   name-correction (the only remaining manually-verified surfaces, per `src/config/capabilities.ts`)
+   or any ops-console screen, a documented manual walkthrough, recorded in the PR description,
+   substitutes for automated e2e coverage.
 
 A change that fails any of these gates is not complete, regardless of whether the underlying feature
 "works" in an ad hoc manual check — these gates exist specifically so that a working demo today

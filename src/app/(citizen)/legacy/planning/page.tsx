@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { revokeTrustedContact } from "./actions";
@@ -17,7 +18,7 @@ export default async function EstatePlanningPage() {
 
   const [estatePlan, assets, liabilities, wills, trustedContacts] = await Promise.all([
     prisma.estatePlan.findUnique({ where: { personId }, include: { reminders: true } }),
-    prisma.asset.findMany({ where: { holdings: { some: { personId } }, deletedAt: null }, include: { institution: true, nominations: true } }),
+    prisma.asset.findMany({ where: { holdings: { some: { personId } }, deletedAt: null }, include: { institution: true, nominations: true, institutionRelationship: true } }),
     prisma.liability.findMany({ where: { personId, deletedAt: null } }),
     prisma.willRecord.findMany({ where: { testatorPersonId: personId }, include: { executorAppointments: { include: { executorPerson: true } } } }),
     prisma.trustedContact.findMany({ where: { grantorPersonId: personId }, include: { holder: true, accessGrants: { include: { accessPolicy: true } } } }),
@@ -62,7 +63,13 @@ export default async function EstatePlanningPage() {
             gaps.map((a) => (
               <div key={a.id} className="flex items-center justify-between rounded-md border border-warning/40 bg-warning/5 p-3 text-sm">
                 <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-warning" /> {a.label} has no nominee on record</span>
-                <Badge variant="warning">Action needed</Badge>
+                {a.institutionRelationship ? (
+                  <Button asChild size="sm" variant="outline">
+                    <Link href={`/requests/new?institutionRelationshipId=${a.institutionRelationship.id}&serviceCategory=nominee_update`}>Add nominee</Link>
+                  </Button>
+                ) : (
+                  <Badge variant="warning">Action needed</Badge>
+                )}
               </div>
             ))
           )}

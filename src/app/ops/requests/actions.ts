@@ -8,7 +8,7 @@ import { policyRecordServiceRequestDecision, policyRequestServiceRequestDeficien
 import { PERMISSIONS } from "@/lib/authz/permissions";
 import { requireUserWithPermission } from "@/lib/authz/guards";
 import { getTenantServiceRequest } from "@/lib/authz/resource-access";
-import { reconcileProfileFieldAfterCompletion, recalculateLifeEventProgress } from "@/lib/reconciliation";
+import { reconcileProfileFieldAfterCompletion, recalculateLifeEventProgress, parseRequestedValue } from "@/lib/reconciliation";
 
 export async function acceptRequestIntoReview(requestId: string) {
   const user = await requireUserWithPermission(PERMISSIONS.SERVICE_REQUEST_REVIEW);
@@ -87,22 +87,22 @@ export async function completeServiceRequestAndReconcile(requestId: string) {
     where: { id: requestId },
     data: { normalizedStatus: "completed", statusEvents: { create: [{ normalizedStatus: "completed", note: `Institution confirmed the update — recorded by ${user.displayName}` }] } },
   });
-  if (request.institutionRelationshipId) {
-    const relationship = await prisma.institutionRelationship.findUnique({ where: { id: request.institutionRelationshipId }, include: { institution: true } });
-    const newValue = request.requestedValueSummary?.replace(/^New address:\s*/i, "");
-    if (relationship && newValue) {
-      await reconcileProfileFieldAfterCompletion({
-        personId: request.personId,
-        fieldKey: "present_address",
-        newValue,
-        sourceLabel: `${relationship.institution.name} (institution-confirmed)`,
-        sourceInstitutionId: relationship.institutionId,
-        institutionRelationshipId: relationship.id,
-        actorUserId: user.id,
-        actorRole: user.primaryRole,
-        serviceRequestId: requestId,
-      });
-    }
+  const parsed = parseRequestedValue(request.serviceDefinition.serviceCategory, request.requestedValueSummary);
+  if (parsed) {
+    const relationship = request.institutionRelationshipId
+      ? await prisma.institutionRelationship.findUnique({ where: { id: request.institutionRelationshipId }, include: { institution: true } })
+      : null;
+    await reconcileProfileFieldAfterCompletion({
+      personId: request.personId,
+      fieldKey: parsed.fieldKey,
+      newValue: parsed.newValue,
+      sourceLabel: `${request.serviceDefinition.serviceCatalogue.institution.name} (institution-confirmed)`,
+      sourceInstitutionId: relationship?.institutionId,
+      institutionRelationshipId: relationship?.id,
+      actorUserId: user.id,
+      actorRole: user.primaryRole,
+      serviceRequestId: requestId,
+    });
   }
 
   if (request.lifeEventId) {

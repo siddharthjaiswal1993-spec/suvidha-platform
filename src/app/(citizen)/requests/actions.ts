@@ -8,6 +8,7 @@ import { logAudit } from "@/lib/audit";
 import { requireUserWithPermission, assertValidRequestTransition } from "@/lib/authz/guards";
 import { policyRespondToDeficiencySelf, policySubmitServiceRequestTransition } from "@/lib/authz/policies";
 import { PERMISSIONS } from "@/lib/authz/permissions";
+import { SERVICE_CATEGORY_FIELD_MAP } from "@/lib/reconciliation";
 
 export async function createServiceRequest(formData: FormData) {
   const user = await requireUserWithPermission(PERMISSIONS.SERVICE_REQUEST_CREATE_SELF);
@@ -16,6 +17,7 @@ export async function createServiceRequest(formData: FormData) {
   const serviceDefinitionId = String(formData.get("serviceDefinitionId"));
   const institutionRelationshipId = String(formData.get("institutionRelationshipId") || "") || null;
   const documentIdEvidence = String(formData.get("documentIdEvidence") || "") || null;
+  const requestedChangeRaw = String(formData.get("requestedChange") || "").trim();
 
   // Document ownership check: a citizen can only attach their own document as evidence.
   if (documentIdEvidence) {
@@ -30,12 +32,16 @@ export async function createServiceRequest(formData: FormData) {
     include: { serviceCatalogue: true },
   });
 
+  const fieldMapping = SERVICE_CATEGORY_FIELD_MAP[serviceDefinition.serviceCategory];
+  const requestedValueSummary = requestedChangeRaw ? (fieldMapping ? `${fieldMapping.prefix} ${requestedChangeRaw}` : requestedChangeRaw) : null;
+
   const request = await prisma.serviceRequest.create({
     data: {
       personId: user.personId,
       serviceDefinitionId,
       institutionRelationshipId,
       documentIdEvidence,
+      requestedValueSummary,
       title: serviceDefinition.title,
       normalizedStatus: "draft",
       executionMethod: serviceDefinition.requiresInPerson ? "in_person_required" : "assisted_digital_workflow",

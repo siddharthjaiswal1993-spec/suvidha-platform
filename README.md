@@ -194,8 +194,16 @@ Every persona below is selectable with one click from `/login` — no credential
    citizen guessing another citizen's request URL, an officer opening another institution's case,
    and an auditor invoking a decision form directly all fail server-side. Covered by
    `tests-e2e/golden-flow-i-negative-authorization.spec.ts`.
+10. **Document, inbox, delegation, institution, and grievance actions** — as Meera: upload a
+    document and share it with an institution (then revoke the share); reply to an inbox thread,
+    report a phishing-style message as suspicious, and escalate a thread straight into a tracked
+    grievance; invite an assistant scoped to one specific open request; connect a new institution
+    (Sanchar Mobile Networks) through the simulated two-step verification; submit a *mobile-number*
+    change (not address) through the general request engine and watch it reconcile into
+    `/profile`'s field history after the maker/checker loop; escalate an open grievance. Covered by
+    `tests-e2e/golden-flow-j-capability-completion.spec.ts`.
 
-All nine are covered by Playwright specs in `tests-e2e/`.
+All ten are covered by Playwright specs in `tests-e2e/` (22 tests across 9 spec files).
 
 ---
 

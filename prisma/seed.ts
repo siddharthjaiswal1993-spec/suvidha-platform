@@ -70,6 +70,8 @@ async function main() {
   const epfo = await prisma.institution.create({ data: { name: "EPFO", category: "pension_body", regulatorId: epfoRegulator.id } });
   const subRegistrar = await prisma.institution.create({ data: { name: "State Sub-Registrar Office", category: "property_registry" } });
   const employer = await prisma.institution.create({ data: { name: "Acme Innovations Pvt Ltd", category: "employer" } });
+  const telecom = await prisma.institution.create({ data: { name: "Sanchar Mobile Networks", category: "telecom" } });
+  void telecom; // deliberately left unconnected to every persona — the "connect a new institution" demo target
   const electricityBoard = await prisma.institution.create({ data: { name: "City Electricity Board", category: "utility" } });
 
   // ---------------------------------------------------------------------------------------------
@@ -289,17 +291,37 @@ async function main() {
   });
 
   // Document hub
-  const aadhaarDoc = await prisma.legalDocument.create({ data: { ownerPersonId: meera.id, documentType: "aadhaar_card", fileLabel: "Aadhaar_Card.pdf", isDemoDocument: DEMO } });
+  const aadhaarDoc = await prisma.legalDocument.create({
+    data: { ownerPersonId: meera.id, documentType: "aadhaar_card", fileLabel: "Aadhaar_Card.pdf", isDemoDocument: DEMO, verifications: { create: [{ outcome: "verified", notes: "Matched against UIDAI demographic response (simulated).", verifiedAt: daysAgo(300) }] } },
+  });
   await prisma.documentProfile.create({
     data: { legalDocumentId: aadhaarDoc.id, issuer: "UIDAI", documentCategory: "identity", digitalSignatureStatus: "not_applicable", permittedUses: toJsonColumn(["identity_verification", "address_proof"]) },
   });
-  const panDoc = await prisma.legalDocument.create({ data: { ownerPersonId: meera.id, documentType: "other", fileLabel: "PAN_Card.pdf", isDemoDocument: DEMO } });
+  const panDoc = await prisma.legalDocument.create({
+    data: { ownerPersonId: meera.id, documentType: "other", fileLabel: "PAN_Card.pdf", isDemoDocument: DEMO, verifications: { create: [{ outcome: "verified", verifiedAt: daysAgo(300) }] } },
+  });
   await prisma.documentProfile.create({ data: { legalDocumentId: panDoc.id, issuer: "Income Tax Department", documentCategory: "tax", permittedUses: toJsonColumn(["tax_filing", "identity_verification"]) } });
-  const dlDoc = await prisma.legalDocument.create({ data: { ownerPersonId: meera.id, documentType: "other", fileLabel: "Driving_Licence.pdf", isDemoDocument: DEMO } });
+  const dlDoc = await prisma.legalDocument.create({
+    data: { ownerPersonId: meera.id, documentType: "other", fileLabel: "Driving_Licence.pdf", isDemoDocument: DEMO, verifications: { create: [{ outcome: "verified", verifiedAt: daysAgo(200) }] } },
+  });
   const dlDocProfile = await prisma.documentProfile.create({
     data: { legalDocumentId: dlDoc.id, issuer: "Parivahan", documentCategory: "identity", expiryDate: daysFromNow(45), permittedUses: toJsonColumn(["identity_verification", "address_proof"]) },
   });
   await prisma.renewal.create({ data: { documentProfileId: dlDocProfile.id, dueDate: daysFromNow(45), status: "upcoming" } });
+
+  const insurancePolicyDoc = await prisma.legalDocument.create({
+    data: { ownerPersonId: meera.id, documentType: "other", fileLabel: "Suraksha_Life_Policy_Document.pdf", isDemoDocument: DEMO, verifications: { create: [{ outcome: "verified", verifiedAt: daysAgo(600) }] } },
+  });
+  const insurancePolicyProfile = await prisma.documentProfile.create({
+    data: { legalDocumentId: insurancePolicyDoc.id, issuer: "Suraksha Life Insurance", documentCategory: "insurance", issueDate: daysAgo(700), expiryDate: daysFromNow(20), permittedUses: toJsonColumn(["claims_processing"]) },
+  });
+  await prisma.renewal.create({ data: { documentProfileId: insurancePolicyProfile.id, dueDate: daysFromNow(20), status: "upcoming" } });
+  await prisma.documentShare.create({ data: { documentProfileId: insurancePolicyProfile.id, sharedWithLabel: "Suraksha Life Insurance", purpose: "Policy renewal confirmation", sharedAt: daysAgo(30) } });
+
+  const oldElectricityBillDoc = await prisma.legalDocument.create({
+    data: { ownerPersonId: meera.id, documentType: "other", fileLabel: "Electricity_Bill_Mar_2026.pdf", isDemoDocument: DEMO, verifications: { create: [{ outcome: "needs_original", notes: "One corner of the scan is illegible — the same document flagged on the Ashoka Bank address request.", verifiedAt: daysAgo(1) }] } },
+  });
+  await prisma.documentProfile.create({ data: { legalDocumentId: oldElectricityBillDoc.id, issuer: "City Electricity Board", documentCategory: "address", issueDate: daysAgo(20) } });
 
   // Service catalogue: every institution that participates in the address-change life event gets
   // its own address_update ServiceDefinition, so requests are attributed to the right institution
@@ -330,9 +352,26 @@ async function main() {
   const electricityAddressService = await seedAddressUpdateService(electricityBoard.id, "City Electricity Board");
   void konkanAddressService; void surakshaAddressService; void parivahanAddressService; void employerAddressService; void electricityAddressService;
 
-  const nomineeUpdateService = await prisma.serviceDefinition.create({
-    data: { serviceCatalogueId: (await prisma.serviceCatalogue.findFirstOrThrow({ where: { institutionId: ashokaBank.id } })).id, serviceCategory: "nominee_update", title: "Add or update nominee", description: "Register or change the nominee for this account.", feeBand: "Free", publishedSlaDays: 7, requiresInPerson: false },
-  });
+  // Generic per-institution service seeding for categories the general request engine (not just
+  // the address-change life event) needs a correctly-attributed ServiceDefinition for — same fix
+  // as seedAddressUpdateService above: one ServiceDefinition per institution, never a single
+  // definition reused (and mis-attributed) across every institution's requests.
+  async function seedServiceDefinition(institutionId: string, institutionName: string, opts: { category: string; title: string; description: string; fieldKey?: string; label?: string }) {
+    const catalogue = await prisma.serviceCatalogue.findFirst({ where: { institutionId } }) ?? await prisma.serviceCatalogue.create({ data: { institutionId, name: `${institutionName} — Citizen Services` } });
+    return prisma.serviceDefinition.create({
+      data: {
+        serviceCatalogueId: catalogue.id, serviceCategory: opts.category, title: opts.title, description: opts.description,
+        feeBand: "Free", publishedSlaDays: 5, requiresInPerson: false,
+        ...(opts.fieldKey ? { requiredFields: { create: [{ fieldKey: opts.fieldKey, label: opts.label ?? opts.title, isMandatory: true }] } } : {}),
+      },
+    });
+  }
+
+  const nomineeUpdateService = await seedServiceDefinition(ashokaBank.id, "Ashoka National Bank", { category: "nominee_update", title: "Add or update nominee", description: "Register or change the nominee for this account." });
+  const konkanNomineeService = await seedServiceDefinition(konkanBank.id, "Konkan Cooperative Bank", { category: "nominee_update", title: "Add or update nominee", description: "Register or change the nominee for this fixed deposit." });
+  const ashokaMobileService = await seedServiceDefinition(ashokaBank.id, "Ashoka National Bank", { category: "mobile_update", title: "Update registered mobile number", description: "Update the mobile number linked to this account for OTP and alerts.", fieldKey: "mobile_primary", label: "New mobile number" });
+  const incomeTaxNameCorrectionService = await seedServiceDefinition(incomeTax.id, "Income Tax Department", { category: "name_correction", title: "PAN name correction", description: "Correct the legal name recorded against your PAN.", fieldKey: "legal_name", label: "Corrected legal name" });
+  void ashokaMobileService; void incomeTaxNameCorrectionService; void nomineeUpdateService;
 
   // The Ashoka Bank address request — pre-staged mid-review with an open deficiency, so the
   // Claims Officer → citizen-response → maker/checker → completion loop is fully demoable live.
@@ -355,7 +394,7 @@ async function main() {
 
   const fdNomineeRequest = await prisma.serviceRequest.create({
     data: {
-      personId: meera.id, institutionRelationshipId: irFD.id, serviceDefinitionId: nomineeUpdateService.id,
+      personId: meera.id, institutionRelationshipId: irFD.id, serviceDefinitionId: konkanNomineeService.id,
       title: "Add nominee to Konkan Cooperative Bank FD", normalizedStatus: "draft", executionMethod: "generated_form_packet",
       scenarioTag: "living-planner",
     },
@@ -412,11 +451,25 @@ async function main() {
       suggestedNextAction: "Start a Tax Rectification request from Financial Administration.", channel: "in_app" },
   });
   await prisma.notice.create({ data: { messageId: taxMessage.id, noticeNumber: "ITD-2026-RECT-88213", noticeType: "income_tax", responseDeadline: daysFromNow(30), checklistGenerated: true } });
+  await prisma.message.create({
+    data: { inboxThreadId: taxThread.id, senderLabel: "Meera Krishnan", senderVerified: true, direction: "citizen_to_institution", importance: "normal",
+      originalBody: "Acknowledged — I'll review Form 26AS and file a rectification request this week.", channel: "in_app", createdAt: daysAgo(3) },
+  });
 
   const securityThread = await prisma.inboxThread.create({ data: { personId: meera.id, subject: "New sign-in on a recognised device", threadType: "security_alert" } });
   await prisma.message.create({
     data: { inboxThreadId: securityThread.id, senderLabel: "Suvidha Security", senderVerified: true, importance: "normal",
       originalBody: "We noticed a sign-in from a new browser in Pune, Maharashtra.", plainLanguageSummary: "This looks like your usual device and city.", channel: "in_app" },
+  });
+
+  // An unverified-sender / suspected-phishing example — the "fraud warning" and "report as
+  // suspicious" UI treatment otherwise has no seeded case to demonstrate against.
+  const phishingThread = await prisma.inboxThread.create({ data: { personId: meera.id, subject: "URGENT: Your KYC will be suspended", threadType: "consent_request" } });
+  await prisma.message.create({
+    data: { inboxThreadId: phishingThread.id, senderLabel: "\"Bank Support Team\"", senderVerified: false, importance: "urgent", fraudWarning: true,
+      originalBody: "Your KYC verification is incomplete and your account will be suspended in 24 hours. Click here immediately to update your details and avoid suspension.",
+      plainLanguageSummary: "This message uses urgency and an unverified sender identity — classic phishing patterns. No genuine institution communicates KYC suspension this way through Suvidha.",
+      channel: "sms_simulated", createdAt: daysAgo(2) },
   });
 
   // Consent examples
@@ -426,6 +479,28 @@ async function main() {
     artefacts: { create: [{ receiptNumber: "CR-2026-004471", scopeSummary: "Bank and mutual fund holdings, read-only, 12 months" }] } } });
   await prisma.consentScope.create({ data: { consentRecordId: meeraConsent.id, consentPurposeId: purposeAssetDiscovery.id, institutionId: ashokaBank.id, scopedEntityLabel: "Ashoka National Bank Savings" } });
   await prisma.consentScope.create({ data: { consentRecordId: meeraConsent.id, consentPurposeId: purposeAddressSync.id, institutionId: uidai.id, scopedEntityLabel: "Aadhaar" } });
+
+  // Grievances — a fully resolved one (with an appeal filed against it) and a fresh open one, so
+  // the citizen-side escalate/appeal UI and the institution-side resolution-with-category UI both
+  // have real data to demonstrate against, not just the create form.
+  const resolvedGrievance = await prisma.grievance.create({
+    data: {
+      raisedByPersonId: meera.id, institutionId: konkanBank.id,
+      subject: "Fixed deposit renewal SMS never arrived", description: "I didn't receive the SMS reminder before my FD auto-renewed at a lower rate than expected.",
+      status: "resolved", resolutionCategory: "service_delay",
+      resolutionNote: "Confirmed our SMS gateway had a delivery delay for your registered number that week. The FD has been re-priced at the rate advertised on the renewal date, and your alert preferences have been re-confirmed.",
+      citizenCommunicationSent: true, createdAt: daysAgo(60), resolvedAt: daysAgo(45),
+    },
+  });
+  await prisma.appeal.create({ data: { grievanceId: resolvedGrievance.id, groundsForAppeal: "The re-priced rate is still 0.25% below the original offer I was quoted verbally.", status: "under_review", filedAt: daysAgo(40) } });
+
+  await prisma.grievance.create({
+    data: {
+      raisedByPersonId: meera.id, institutionId: ashokaBank.id,
+      subject: "Address update taking longer than the published SLA", description: "The published SLA for an address update is 5 days, and mine has been pending for over a week.",
+      status: "open", createdAt: daysAgo(2),
+    },
+  });
 
   // ---------------------------------------------------------------------------------------------
   // FAMILY-ASSISTED ACCESS — Golden Flow: Family Assisted Access (Domain H)

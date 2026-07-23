@@ -848,8 +848,8 @@ model DeficiencyRequest {
   title            String
   description      String
   /// open | responded | resolved | waived
-  status           String    @default("open")
-  raisedAt         DateTime  @default(now())
+  status           String          @default("open")
+  raisedAt         DateTime        @default(now())
   respondedAt      DateTime?
   resolvedAt       DateTime?
 }
@@ -962,23 +962,25 @@ model Communication {
 }
 
 model Grievance {
-  id               String          @id @default(cuid())
-  raisedByPersonId String?
-  institutionId    String?
-  institution      Institution?    @relation(fields: [institutionId], references: [id])
-  claimId          String?
-  serviceRequestId String?
-  serviceRequest   ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
-  subject          String
-  description      String
+  id                       String          @id @default(cuid())
+  raisedByPersonId         String?
+  institutionId            String?
+  institution              Institution?    @relation(fields: [institutionId], references: [id])
+  claimId                  String?
+  serviceRequestId         String?
+  serviceRequest           ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  sourceInboxThreadId      String?
+  sourceInboxThread        InboxThread?    @relation(fields: [sourceInboxThreadId], references: [id])
+  subject                  String
+  description              String
   /// open | in_progress | resolved | escalated
-  status           String          @default("open")
+  status                   String          @default("open")
   /// service_delay | incorrect_information | fraud_concern | poor_service | policy_dispute | other
-  resolutionCategory String?
-  resolutionNote     String?
-  citizenCommunicationSent Boolean  @default(false)
-  createdAt        DateTime        @default(now())
-  resolvedAt       DateTime?
+  resolutionCategory       String?
+  resolutionNote           String?
+  citizenCommunicationSent Boolean         @default(false)
+  createdAt                DateTime        @default(now())
+  resolvedAt               DateTime?
 
   escalations Escalation[]
   appeals     Appeal[]
@@ -1535,7 +1537,8 @@ model InboxThread {
   threadType       String
   createdAt        DateTime        @default(now())
 
-  messages Message[]
+  messages   Message[]
+  grievances Grievance[]
 }
 
 model Message {
@@ -1549,6 +1552,9 @@ model Message {
   plainLanguageSummary String?
   suggestedNextAction  String?
   fraudWarning         Boolean     @default(false)
+  /// institution_to_citizen | citizen_to_institution
+  direction            String      @default("institution_to_citizen")
+  reportedSuspiciousAt DateTime?
   channel              String      @default("in_app") // in_app | email_simulated | sms_simulated
   createdAt            DateTime    @default(now())
   readAt               DateTime?

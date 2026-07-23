@@ -1,5 +1,11 @@
 # Document & Evidence Model
 
+**Implementation status** (authoritative record: `src/config/capabilities.ts`
+→ `document_evidence_hub`): upload, a document detail page (verification history, renewal,
+reuse-as-evidence history), sharing with revocation, and deletion are all real, e2e-tested writes
+at `/documents` and `/documents/[id]`. No real file bytes are ever stored (`LegalDocument.isDemoDocument`)
+and there is no DigiLocker fetch.
+
 **Domain C of the lifelong citizen administration platform.** Source models:
 `DocumentProfile`, `DocumentShare`, `Renewal`, `Signature` — all extending the
 already-existing `LegalDocument` model from the Legacy & Succession domain rather than

@@ -18,7 +18,7 @@ export async function getOwnedServiceRequest(requestId: string, actingPersonId: 
 export async function getTenantServiceRequest(requestId: string, actingInstitutionId: string | null | undefined) {
   const request = await prisma.serviceRequest.findUnique({
     where: { id: requestId },
-    include: { serviceDefinition: { include: { serviceCatalogue: true } } },
+    include: { serviceDefinition: { include: { serviceCatalogue: { include: { institution: true } } } } },
   });
   if (!request) throw new AuthzError("Request not found.");
   requireInstitutionTenancy(actingInstitutionId, request.serviceDefinition.serviceCatalogue.institutionId);

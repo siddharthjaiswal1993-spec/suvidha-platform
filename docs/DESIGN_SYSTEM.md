@@ -57,7 +57,7 @@ missing dependency.
 | `Accordion` | `@radix-ui/react-accordion` | Used for progressive disclosure (e.g. expanding a service's full requirement list) so screens stay scannable for low-digital-literacy users by default. |
 | `DropdownMenu` | `@radix-ui/react-dropdown-menu` | Used for secondary/overflow actions in ops-console rows (assign case, escalate) — never for a request's primary submit action. |
 | `Skeleton` | plain styled `div` | Loading-state placeholder — see "Loading state" convention below. |
-| `EmptyState` | composed from `Card` + icon + copy slot | See "Empty state" convention below. |
+| `EmptyState` | `src/components/domain/empty-state.tsx` — `Card` + icon + copy slot + optional action | See "Empty state" convention below. Used on Documents and Family & Delegated Access; not yet rolled out to every list screen in the app. |
 | `ExecutionMethodBadge` | composed from `Badge` + `Tooltip` | Suvidha-specific, not a generic primitive: renders the mandatory execution-method label (see below) consistently everywhere a request or action appears. |
 | `DemoDataIndicator` | composed from `Badge` + `Tooltip` | Suvidha-specific: marks synthetic/seeded data — see below. |
 

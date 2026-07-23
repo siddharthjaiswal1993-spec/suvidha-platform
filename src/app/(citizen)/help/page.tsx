@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { raiseGrievance } from "./actions";
@@ -34,13 +35,15 @@ export default async function HelpGrievancesPage() {
 
       <div className="space-y-3">
         {grievances.map((g) => (
-          <Card key={g.id}>
-            <CardHeader className="flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">{g.subject}</CardTitle>
-              <Badge variant={g.status === "resolved" ? "success" : g.status === "escalated" ? "warning" : "outline"}>{g.status}</Badge>
-            </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">{g.description}</CardContent>
-          </Card>
+          <Link key={g.id} href={`/help/${g.id}`}>
+            <Card className="transition-colors hover:bg-muted/60">
+              <CardHeader className="flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base">{g.subject}</CardTitle>
+                <Badge variant={g.status === "resolved" ? "success" : g.status === "escalated" ? "warning" : "outline"}>{g.status.replaceAll("_", " ")}</Badge>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">{g.description}</CardContent>
+            </Card>
+          </Link>
         ))}
       </div>
     </div>

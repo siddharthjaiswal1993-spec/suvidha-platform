@@ -1,15 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
-import { loginAs } from "./helpers";
-
-/**
- * The "Acting as" / "Outcome" fields are Radix `Select` comboboxes (a trigger button, not a
- * native `<select>`), so Playwright's `selectOption` doesn't apply — open the popup and click
- * the option by its visible label instead.
- */
-async function chooseOption(page: Page, label: string, optionText: string) {
-  await page.getByLabel(label).click();
-  await page.getByRole("option", { name: optionText, exact: true }).click();
-}
+import { test, expect } from "@playwright/test";
+import { loginAs, chooseOption } from "./helpers";
 
 /**
  * Golden Flow G — the primary end-to-end outcome: a citizen's address-change request that

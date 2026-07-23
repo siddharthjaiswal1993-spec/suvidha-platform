@@ -1,5 +1,10 @@
 # Communication & Inbox
 
+**Implementation status** (authoritative record: `src/config/capabilities.ts`
+→ `communication_inbox`): reply, escalate-to-grievance, and report-as-suspicious are all real,
+e2e-tested writes at `/inbox/[id]`. There is still no institution-side compose/send screen —
+institution-originated messages are seeded, not sent from an ops UI.
+
 **Domain E of the lifelong citizen administration platform.** Source models:
 `InboxThread`, `Message`, `Notice`. This doc covers the data model and UX of the
 unified communication centre; the AI layer that actually produces

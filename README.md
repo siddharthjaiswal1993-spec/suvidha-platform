@@ -203,7 +203,7 @@ Every persona below is selectable with one click from `/login` — no credential
     `/profile`'s field history after the maker/checker loop; escalate an open grievance. Covered by
     `tests-e2e/golden-flow-j-capability-completion.spec.ts`.
 
-All ten are covered by Playwright specs in `tests-e2e/` (22 tests across 9 spec files).
+All ten are covered by Playwright specs in `tests-e2e/` (23 tests across 9 spec files).
 
 ---
 

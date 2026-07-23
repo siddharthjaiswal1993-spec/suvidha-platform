@@ -113,6 +113,47 @@ test.describe("Golden Flow J — Document, inbox, delegation, institution, and g
     await expect(page.getByText("+91 98123 45670")).toBeVisible();
   });
 
+  test("completing a PAN name-correction request reconciles the citizen's legal name", async ({ page }) => {
+    await loginAs(page, "Meera");
+    await page.goto("/requests/new");
+    await chooseOption(page, "Service", "Income Tax Department — PAN name correction");
+    await page.getByPlaceholder(/12 MG Road, Pune/).fill("Meera Arvind Krishnan");
+    await page.getByRole("button", { name: "Create draft request" }).click();
+    await page.waitForURL(/\/requests\/(?!new)/);
+    const requestId = page.url().split("/requests/")[1];
+    await expect(page.getByText("New legal name: Meera Arvind Krishnan")).toBeVisible();
+
+    await page.getByRole("button", { name: "Submit this request" }).click();
+    await expect(page.getByText("submitted", { exact: true }).first()).toBeVisible();
+
+    await loginAs(page, "Ramesh");
+    await page.goto(`/ops/requests/${requestId}`);
+    await page.getByRole("button", { name: "Accept into review" }).click();
+    await expect(page.getByText("under review", { exact: true }).first()).toBeVisible();
+    await chooseOption(page, "Acting as", "Maker");
+    await chooseOption(page, "Outcome", "Recommend approve");
+    await page.getByRole("button", { name: "Record decision" }).click();
+    await expect(page.getByText("maker").first()).toBeVisible();
+
+    await loginAs(page, "Sunita");
+    await page.goto(`/ops/requests/${requestId}`);
+    await chooseOption(page, "Acting as", "Checker");
+    await chooseOption(page, "Outcome", "Approve");
+    await page.getByRole("button", { name: "Record decision" }).click();
+    await expect(page.getByText("approved").first()).toBeVisible();
+    await page.getByRole("button", { name: "Complete institution update & reconcile citizen record" }).click();
+    await expect(page.getByText("completed").first()).toBeVisible();
+
+    await loginAs(page, "Meera");
+    await page.goto("/profile");
+    const historyTab = page.getByRole("tab", { name: "Field history" });
+    await expect(async () => {
+      await historyTab.click();
+      await expect(historyTab).toHaveAttribute("aria-selected", "true", { timeout: 1000 });
+    }).toPass({ timeout: 15_000 });
+    await expect(page.getByText("Meera Arvind Krishnan")).toBeVisible();
+  });
+
   test("Meera can escalate an open grievance and see the escalation recorded", async ({ page }) => {
     await loginAs(page, "Meera");
     await page.goto("/help");

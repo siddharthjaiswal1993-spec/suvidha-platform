@@ -119,3 +119,31 @@ of "10/10" worth optimizing for here is the first one, and this pass moved concr
 | Localisation | 4 | 4 | Unchanged — still deprioritized per product direction. |
 | Portfolio quality | 8 | **9** | The "click anywhere and it works" bar — the single biggest determinant of how a prototype reads to a reviewer — is now met across the whole app, not just the golden paths. |
 | Production readiness | 5 | 5 | Unchanged — capped by SQLite/`/tmp`, no real integrations/auth; more features don't move this number, only real infrastructure does (see §4). |
+
+## 6. Addendum — fixes from a manual review pass
+
+A subsequent review actually looked at the new screens in a browser, rather than trusting
+automated tests alone, and found four real, fixable issues — all closed in a follow-up pass:
+
+- **A genuine WCAG AA failure**, found by extending the axe-core scan from one page to a second
+  flow: the `warning` Badge variant had 4.23:1 contrast against white text (needs 4.5:1). Fixed by
+  darkening `--warning` to `#a15c19` (5.17:1) in `globals.css`. The scan now also covers
+  `golden-flow-g`'s citizen request-detail page and — for the first time — an institution
+  ops-console page.
+- **An ambiguous UI label**: the Profile → Field History tab showed multiple entries all labeled
+  simply "Current" for the same field (one per source), which could read as contradictory given how
+  carefully the Profile Consistency tab one tab over avoids picking a winner across sources. Now
+  reads "Current for this source" with an explanatory line.
+- **A real data-model gap**: three of Meera's financial assets (mutual fund, demat, EPF) had no
+  matching `InstitutionRelationship` row, so they silently never appeared on `/institutions`, and
+  the EPF nomination gap had no working "Add nominee" CTA target. Fixed by seeding the missing
+  relationships and, for EPFO and the depository (which had none), their `nominee_update`
+  `ServiceDefinition`s.
+- **A capability that was untestable, not just untested**: PAN name-correction (Income Tax
+  Department) had a `ServiceDefinition` but no maker/checker ops persona able to process it —
+  found while trying to add the e2e test the v3 report had flagged as missing. Fixed by adding a
+  maker/checker pair for Income Tax Department; `legal_name` reconciliation is now proven end to
+  end exactly like `present_address` and `mobile_primary`, closing the last named gap from §4.
+
+Gates re-verified after this pass: typecheck, lint, 37/37 unit tests, 23/23 e2e tests (up from 22),
+production build all pass.

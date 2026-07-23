@@ -61,7 +61,7 @@ export const CAPABILITIES: Capability[] = [
     integrationStatus: "partner_dependent",
     testStatus: "unit_and_e2e_tested",
     productionReadiness: "documented_only",
-    limitations: "Most relationships are seeded synthetic data, but a citizen can now connect a new institution themselves (a two-step simulated identity match — under_verification, then a citizen-confirmed active state — modelling the real two-step process honestly rather than an instant unexplained \"verified\" badge). No live connector exists — see docs/INTEGRATIONS.md.",
+    limitations: "Most relationships are seeded synthetic data, but a citizen can now connect a new institution themselves (a two-step simulated identity match — under_verification, then a citizen-confirmed active state — modelling the real two-step process honestly rather than an instant unexplained \"verified\" badge). A design review found three financial assets (mutual fund, demat, EPF) had no matching InstitutionRelationship row at all, so they silently never appeared on this page and one (EPF) had a nomination gap with no working \"Add nominee\" CTA target — fixed by seeding the missing relationships and their institutions' nominee_update ServiceDefinitions. No live connector exists — see docs/INTEGRATIONS.md.",
     relevantRoutes: ["/institutions", "/institutions/[id]"],
   },
   {
@@ -121,7 +121,7 @@ export const CAPABILITIES: Capability[] = [
     integrationStatus: "not_applicable",
     testStatus: "unit_and_e2e_tested",
     productionReadiness: "documented_only",
-    limitations: "Now proven end to end for present_address (the flagship flow) AND mobile_primary (via a general nominee/mobile/name request, not just the address life event) — both use the identical SERVICE_CATEGORY_FIELD_MAP mechanism, so legal_name (PAN name correction) is wired the same way even though it isn't separately e2e-covered yet. See src/lib/reconciliation.ts.",
+    limitations: "Now proven end to end for all three mapped fields — present_address (the flagship flow), mobile_primary, and legal_name (PAN name correction) — each via a real maker/checker/complete loop at a different institution (Ashoka Bank, Ashoka Bank, Income Tax Department respectively). The PAN correction test required adding a maker/checker user pair for Income Tax Department, which previously had a ServiceDefinition but no ops persona able to process it — found and fixed alongside the test. See src/lib/reconciliation.ts.",
     relevantRoutes: ["/profile", "/institutions/[id]"],
   },
   {
@@ -217,7 +217,7 @@ export const CAPABILITIES: Capability[] = [
     integrationStatus: "not_applicable",
     testStatus: "e2e_tested",
     productionReadiness: "documented_only",
-    limitations: "docs/TEST_PLAN.md previously claimed an axe-core scan and a keyboard-only pass on every golden flow — neither existed. This pass adds a real axe-core scan (critical/serious violations fail the test) and a keyboard-tab-order check to golden-flow-a, and a GitHub Actions workflow (.github/workflows/ci.yml) running typecheck/lint/unit/e2e/build on every push and PR. Still only one flow carries the accessibility scan, not all eight spec files — the TEST_PLAN.md wording has been corrected to say so honestly rather than re-claiming full coverage.",
+    limitations: "docs/TEST_PLAN.md previously claimed an axe-core scan and a keyboard-only pass on every golden flow — neither existed. A real axe-core scan (critical/serious violations fail the test) and a keyboard-tab-order check now run on three pages across two flows: golden-flow-a's citizen dashboard, and golden-flow-g's citizen request-detail page and institution ops-console page. Extending the scan to golden-flow-g's ops page immediately found a real WCAG AA failure — the \"warning\" badge (used for statuses like \"Awaiting institution decision\") had 4.23:1 contrast against white text, below the 4.5:1 minimum — fixed by darkening --warning in globals.css to 5.17:1. Still 3 of 9 spec files carry the scan, not all — stated honestly rather than re-claiming full coverage.",
     relevantRoutes: ["*"],
   },
 ];

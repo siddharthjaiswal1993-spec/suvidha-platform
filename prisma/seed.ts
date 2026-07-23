@@ -283,6 +283,19 @@ async function main() {
   const irElectricity = await prisma.institutionRelationship.create({
     data: { personId: meera.id, institutionId: electricityBoard.id, relationshipType: "utility", label: "City Electricity Board Connection", referenceNumberMasked: "CEB••••4471", status: "active", verificationStatus: "verified", lastSyncedAt: daysAgo(3) },
   });
+  // The remaining financial Assets (mutual fund, demat, EPF) previously had no matching
+  // InstitutionRelationship row, so they never appeared on /institutions and the EPF nomination
+  // gap had no working "Add nominee" deep-link target — found during a design review and fixed.
+  const irMF = await prisma.institutionRelationship.create({
+    data: { personId: meera.id, institutionId: himalayaMF.id, relationshipType: "financial_account", label: "Himalaya Mutual Fund — Growth Plan", referenceNumberMasked: maskAccount("3390"), linkedAssetId: meeraMF.id, status: "active", registeredNomineeSummary: "Daughter — 100%", verificationStatus: "verified", lastSyncedAt: daysAgo(7), connectorId: connectors.mutual_fund.id },
+  });
+  const irDemat = await prisma.institutionRelationship.create({
+    data: { personId: meera.id, institutionId: depository.id, relationshipType: "financial_account", label: "Demat Holding — Central Securities Depository", referenceNumberMasked: maskAccount("1102"), linkedAssetId: meeraDemat.id, status: "active", registeredNomineeSummary: "No nominee on record", verificationStatus: "verified", lastSyncedAt: daysAgo(12), connectorId: connectors.depository.id },
+  });
+  const irEPF = await prisma.institutionRelationship.create({
+    data: { personId: meera.id, institutionId: epfo.id, relationshipType: "financial_account", label: "EPF Account", referenceNumberMasked: maskAccount("8834"), linkedAssetId: meeraEPF.id, status: "active", registeredNomineeSummary: "No nominee on record", verificationStatus: "verified", lastSyncedAt: daysAgo(20), connectorId: connectors.epfo.id },
+  });
+  void irMF; void irDemat; void irEPF;
   await prisma.sourceSync.createMany({
     data: [
       { institutionRelationshipId: irBank.id, status: "success", startedAt: daysAgo(1), completedAt: daysAgo(1), recordsSynced: 4 },
@@ -369,6 +382,9 @@ async function main() {
 
   const nomineeUpdateService = await seedServiceDefinition(ashokaBank.id, "Ashoka National Bank", { category: "nominee_update", title: "Add or update nominee", description: "Register or change the nominee for this account." });
   const konkanNomineeService = await seedServiceDefinition(konkanBank.id, "Konkan Cooperative Bank", { category: "nominee_update", title: "Add or update nominee", description: "Register or change the nominee for this fixed deposit." });
+  const epfoNomineeService = await seedServiceDefinition(epfo.id, "EPFO", { category: "nominee_update", title: "Add or update EPF nominee", description: "Register or change the nominee for this EPF account." });
+  const depositoryNomineeService = await seedServiceDefinition(depository.id, "Central Securities Depository (simulated)", { category: "nominee_update", title: "Add or update nominee", description: "Register or change the nominee for this demat holding." });
+  void epfoNomineeService; void depositoryNomineeService;
   const ashokaMobileService = await seedServiceDefinition(ashokaBank.id, "Ashoka National Bank", { category: "mobile_update", title: "Update registered mobile number", description: "Update the mobile number linked to this account for OTP and alerts.", fieldKey: "mobile_primary", label: "New mobile number" });
   const incomeTaxNameCorrectionService = await seedServiceDefinition(incomeTax.id, "Income Tax Department", { category: "name_correction", title: "PAN name correction", description: "Correct the legal name recorded against your PAN.", fieldKey: "legal_name", label: "Corrected legal name" });
   void ashokaMobileService; void incomeTaxNameCorrectionService; void nomineeUpdateService;
@@ -728,6 +744,12 @@ async function main() {
   const verificationOfficer = await prisma.user.create({ data: { email: "verification.officer@demo.suvidha.app", displayName: "Rohan Das (Verification Officer, Suraksha Life Insurance)", primaryRole: "verification_officer", institutionId: surakshaInsurance.id } });
   const maker = await prisma.user.create({ data: { email: "maker@demo.suvidha.app", displayName: "Anita Rao (Maker, Ashoka National Bank)", primaryRole: "maker", institutionId: ashokaBank.id } });
   const checker = await prisma.user.create({ data: { email: "checker@demo.suvidha.app", displayName: "Suresh Menon (Checker, Ashoka National Bank)", primaryRole: "checker", institutionId: ashokaBank.id } });
+  // Income Tax Department had no ops persona at all — meaning the PAN name-correction
+  // ServiceDefinition (seeded above) could never actually be processed end to end. Found and fixed
+  // alongside the address/mobile maker-checker pair, following the same pattern.
+  const panMaker = await prisma.user.create({ data: { email: "pan.maker@demo.suvidha.app", displayName: "Ramesh Iyer (Maker, Income Tax Department)", primaryRole: "maker", institutionId: incomeTax.id } });
+  const panChecker = await prisma.user.create({ data: { email: "pan.checker@demo.suvidha.app", displayName: "Sunita Pillai (Checker, Income Tax Department)", primaryRole: "checker", institutionId: incomeTax.id } });
+  void panMaker; void panChecker;
   await prisma.user.create({ data: { email: "adjudicator@demo.suvidha.app", displayName: "Justice (Retd.) K. Iyer — Adjudicator", primaryRole: "adjudicator", institutionId: surakshaInsurance.id } });
   await prisma.user.create({ data: { email: "grievance.officer@demo.suvidha.app", displayName: "Priya Nambiar (Grievance Officer)", primaryRole: "grievance_officer", institutionId: surakshaInsurance.id } });
   await prisma.user.create({ data: { email: "auditor@demo.suvidha.app", displayName: "V. Chandran (Auditor)", primaryRole: "auditor", institutionId: ashokaBank.id } });

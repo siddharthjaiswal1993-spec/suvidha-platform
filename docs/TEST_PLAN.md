@@ -3,7 +3,7 @@
 ## Status note
 
 This document now describes the test suite as actually implemented, not a target contract for
-future work — 37 Vitest unit tests across `src/lib/engines/` and `src/lib/authz/`, and 22 Playwright
+future work — 37 Vitest unit tests across `src/lib/engines/` and `src/lib/authz/`, and 23 Playwright
 tests across 9 spec files under `tests-e2e/`. Run `npm test` and `npm run test:e2e` to reproduce the numbers below;
 `src/config/capabilities.ts` records per-capability test status if this document and reality ever
 drift apart. A GitHub Actions workflow (`.github/workflows/ci.yml`) runs all of the above plus the
@@ -96,16 +96,14 @@ instance — used to verify the live demo after each deploy):
 | 4 | `golden-flow-d-claimant-and-ops.spec.ts` | Claimant tracks a claim; Claims Officer reviews it and records a decision | Covers both the citizen and institution-officer surfaces for Legacy & Succession claims. |
 | 5 | `golden-flow-e-false-death-correction.spec.ts` | Challenge → re-verification → correction → restoration | A safety-critical reversal path that must never regress silently. |
 | 6 | `golden-flow-f-no-will-claimant.spec.ts` | Uninvited claimant, intestate succession, open deficiency | The harder claimant path — no prior Trusted Contact relationship. |
-| 7 | `golden-flow-g-address-change-institution-loop.spec.ts` | **The primary end-to-end outcome**: citizen deficiency response → maker recommendation → a *different* checker's approval → institution completion → profile reconciliation; plus the negative case of a maker attempting to also act as checker on their own case | Proves the whole cross-domain thesis — a life event resolved through real institution review, closing the loop back into the citizen's own profile — actually works, not just that each screen renders. |
+| 7 | `golden-flow-g-address-change-institution-loop.spec.ts` | **The primary end-to-end outcome**: citizen deficiency response → maker recommendation → a *different* checker's approval → institution completion → profile reconciliation; plus the negative case of a maker attempting to also act as checker on their own case | Proves the whole cross-domain thesis — a life event resolved through real institution review, closing the loop back into the citizen's own profile — actually works, not just that each screen renders. Also carries two accessibility smoke checks (see below). |
 | 8 | `golden-flow-i-negative-authorization.spec.ts` | Cross-citizen, cross-institution, and role-based access attempts, all rejected server-side | Proves `src/lib/authz/` is load-bearing, not just documented — see `docs/ACCESS_CONTROL_MATRIX.md`. |
-| 9 | `golden-flow-j-capability-completion.spec.ts` | Document upload/sharing, inbox reply/escalate/report-suspicious, delegated-access invitation, connecting a new institution, a *non-address* request (mobile number) reconciling correctly, grievance escalation, and the Life Admin Assistant's expanded question set | Proves the capabilities that were previously `interface_prototype` (real screen, no real action behind it) in `src/config/capabilities.ts` actually write state now, not just render — the same category of gap the IDOR/authorization audit found in v2, applied to feature-completeness instead of security. |
+| 9 | `golden-flow-j-capability-completion.spec.ts` | Document upload/sharing, inbox reply/escalate/report-suspicious, delegated-access invitation, connecting a new institution, non-address requests (mobile number and PAN name correction) reconciling correctly, grievance escalation, and the Life Admin Assistant's expanded question set | Proves the capabilities that were previously `interface_prototype` (real screen, no real action behind it) in `src/config/capabilities.ts` actually write state now, not just render — the same category of gap the IDOR/authorization audit found in v2, applied to feature-completeness instead of security. |
 
 **Manually verified, not under full e2e** (see `src/config/capabilities.ts` for the authoritative
-list): the financial administration overview's read-only views, and PAN name-correction
-specifically (it shares the exact reconciliation code path proven by flow #9's mobile-number test,
-but isn't separately exercised). These are lower-frequency or lower-risk relative to the
-authorization and cross-domain-orchestration paths that get full e2e investment, consistent with
-this being a time-boxed prototype rather than a production QA program.
+list): the financial administration overview's read-only views. This is lower-frequency and
+lower-risk relative to the authorization and cross-domain-orchestration paths that get full e2e
+investment, consistent with this being a time-boxed prototype rather than a production QA program.
 
 **A note on dev-server flakiness this suite surfaced (and fixed) during development**: two real
 bugs were only caught by running this suite, not by manual clicking — (1) Next.js blocks a dev
@@ -136,14 +134,20 @@ coverage:
 
 ### Accessibility smoke checks
 
-**Honest status, corrected after an earlier version of this document overclaimed it**: only
-`golden-flow-a-onboarding-and-planning.spec.ts` currently carries an automated check — an
-`@axe-core/playwright` scan on the `/home` dashboard asserting zero critical/serious violations,
-plus a keyboard-tab-order check confirming focus lands on a real interactive element without a
-mouse. The other eight spec files do not. A check that every icon-only control has an accessible
-name, and that execution-method badges carry accessible text, is not automated anywhere — both are
-still manual-review items against `docs/ACCESSIBILITY.md` and `docs/DESIGN_SYSTEM.md`. Extending
-the axe-core scan to the remaining flows is listed as a recommended next step, not claimed as done.
+**Honest status, corrected after an earlier version of this document overclaimed it**: three pages
+across two spec files currently carry an automated `@axe-core/playwright` scan (critical/serious
+violations fail the test) — `golden-flow-a`'s `/home` citizen dashboard, and `golden-flow-g`'s
+citizen request-detail page (`/requests/[id]`, form-heavy) and institution ops-console page
+(`/ops/requests/[id]`, the first ops screen ever scanned). `golden-flow-a` also carries a
+keyboard-tab-order check confirming focus lands on a real interactive element without a mouse. The
+other seven spec files carry neither. **Extending the scan to a second flow immediately found a
+real WCAG AA violation**, not a hypothetical one: the `warning` badge variant (used for statuses
+like "Awaiting institution decision") had 4.23:1 contrast against white text against a 4.5:1
+minimum — fixed by darkening `--warning` in `globals.css` to 5.17:1. A check that every icon-only
+control has an accessible name, and that execution-method badges carry accessible text, is not
+automated anywhere — both are still manual-review items against `docs/ACCESSIBILITY.md` and
+`docs/DESIGN_SYSTEM.md`. Extending the scan to the remaining seven flows is a recommended next
+step, not claimed as done.
 
 ## 3. Gates before considering a change complete
 
@@ -162,9 +166,9 @@ No change is considered complete until all of the following pass locally and in 
    boundary mistakes, and any Prisma-adapter driver misconfiguration, that typecheck alone can miss).
 5. **E2E** — `npm run test:e2e`, all nine spec files passing, before a change touching any of those
    flows' underlying models or Server Actions is merged.
-6. **Manual smoke pass** — for changes touching the financial administration overview or PAN
-   name-correction (the only remaining manually-verified surfaces, per `src/config/capabilities.ts`)
-   or any ops-console screen, a documented manual walkthrough, recorded in the PR description,
+6. **Manual smoke pass** — for changes touching the financial administration overview (the only
+   remaining manually-verified surface, per `src/config/capabilities.ts`) or any ops-console screen
+   not yet under e2e, a documented manual walkthrough, recorded in the PR description,
    substitutes for automated e2e coverage.
 
 A change that fails any of these gates is not complete, regardless of whether the underlying feature

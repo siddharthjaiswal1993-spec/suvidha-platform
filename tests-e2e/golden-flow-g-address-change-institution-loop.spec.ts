@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 import { loginAs, chooseOption } from "./helpers";
 
 /**
@@ -21,6 +22,13 @@ test.describe("Golden Flow G — Address-change institution review loop", () => 
     expect(requestId).toBeTruthy();
 
     await expect(page.getByText("Action needed: Clearer address-proof document required")).toBeVisible();
+
+    // Accessibility smoke check on a form-heavy citizen page — golden-flow-a covers the dashboard,
+    // this covers a page with an active deficiency-response form and status timeline.
+    const requestPageScan = await new AxeBuilder({ page }).include("main").analyze();
+    const requestPageCritical = requestPageScan.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
+    expect(requestPageCritical, JSON.stringify(requestPageCritical, null, 2)).toEqual([]);
+
     await page.getByPlaceholder("Describe what you're submitting in response...").fill("Attaching a recent electricity bill showing the new address clearly.");
     await page.getByRole("button", { name: "Submit response" }).click();
     await expect(page.getByText("under review")).toBeVisible();
@@ -29,6 +37,13 @@ test.describe("Golden Flow G — Address-change institution review loop", () => 
     await loginAs(page, "Anita");
     await page.goto(`/ops/requests/${requestId}`);
     await expect(page.getByRole("heading", { name: /Update address at Ashoka National Bank/ })).toBeVisible();
+
+    // Accessibility smoke check on the institution ops console — previously zero ops screens had
+    // any automated scan, only citizen screens did.
+    const opsPageScan = await new AxeBuilder({ page }).include("main").analyze();
+    const opsPageCritical = opsPageScan.violations.filter((v) => v.impact === "critical" || v.impact === "serious");
+    expect(opsPageCritical, JSON.stringify(opsPageCritical, null, 2)).toEqual([]);
+
     await chooseOption(page, "Acting as", "Maker");
     await chooseOption(page, "Outcome", "Recommend approve");
     await page.getByRole("button", { name: "Record decision" }).click();

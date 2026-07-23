@@ -101,7 +101,10 @@ export default async function ProfilePage() {
           {fieldValuesByField.size === 0 && <p className="text-sm text-muted-foreground">No field history recorded yet.</p>}
           {Array.from(fieldValuesByField.entries()).map(([label, values]) => (
             <Card key={label}>
-              <CardHeader><CardTitle className="text-base">{label}</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-base">{label}</CardTitle>
+                <CardDescription>Each source reports its own value independently — Suvidha never picks a single winner across sources. &quot;Current&quot; means the latest value reported by that source, not the one Suvidha considers correct.</CardDescription>
+              </CardHeader>
               <CardContent className="space-y-2">
                 {values.map((v) => (
                   <div key={v.id} className="flex items-center justify-between rounded-md border border-border p-3 text-sm">
@@ -109,7 +112,7 @@ export default async function ProfilePage() {
                       <p className={v.isCurrentForSource ? "font-medium" : "text-muted-foreground line-through"}>{v.value}</p>
                       <p className="text-xs text-muted-foreground">{v.sourceLabel} · {v.provenance.replaceAll("_", " ")}{v.lastVerifiedAt ? ` · verified ${formatDateTime(v.lastVerifiedAt)}` : ""}</p>
                     </div>
-                    {v.isCurrentForSource && <Badge variant="outline">Current</Badge>}
+                    {v.isCurrentForSource && <Badge variant="outline">Current for this source</Badge>}
                   </div>
                 ))}
               </CardContent>
